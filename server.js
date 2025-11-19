@@ -44,8 +44,8 @@ const SYMBOLS_TO_WATCH = [
   'BTCUSDT',
   'ETHUSDT',
   'SOLUSDT',
-  'SUIUSDT',
-  'XRPUST'
+  'SUIUSDT_UMCBL',
+  'XRPUSDT'
 ];
 
 // Autonomer Trading-Zyklus für alle Symbole
