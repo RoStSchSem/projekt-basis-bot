@@ -1,18 +1,18 @@
-// server.js – Render-kompatibel: HTTP-Server + autonomer Bot
+// server.js – Projekt Basis Bot (Render-kompatibel)
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const { getSpotPrice, getCandles } = require('./bitgetClient');
 
 const app = express();
-const PORT = process.env.PORT || 10000; // Render erwartet 10000
+const PORT = process.env.PORT || 10000;
 
 // Health-Check für Render
 app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
-// Starte HTTP-Server – Render erkennt den Port und hält den Prozess am Leben
+// Starte HTTP-Server (Render erkennt Port 10000)
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🌐 Render: HTTP-Server läuft auf Port ${PORT}`);
   console.log('🤖 Autonomer Trading-Bot wird gestartet...');
@@ -24,7 +24,7 @@ async function sendEmail(subject, text) {
   try {
     await axios.post('https://api.resend.com/emails', {
       from: 'bot@basis.de',
-      to: ['deepseek-tradingbot@rossem.de'], // 🔁 DEINE E-MAIL
+      to: ['deepseek-tradingbot@rossem.de'], // 🔁 Deine E-Mail
       subject: subject,
       text: text
     }, {
@@ -36,12 +36,10 @@ async function sendEmail(subject, text) {
   }
 }
 
-
-
-// Globale Flag (außerhalb von tradingCycle)
+// Globale Flag für Startup-Test
 let hasSentStartupEmail = false;
 
-// ===== Autonomer Trading-Zyklus mit Deepseek + Resend =====
+// Autonomer Trading-Zyklus
 async function tradingCycle() {
   const symbol = 'BTCUSDT';
   console.log(`\n🔄 Trading-Zyklus gestartet für ${symbol} – ${new Date().toISOString()}`);
@@ -55,7 +53,7 @@ async function tradingCycle() {
     return;
   }
 
-  // 2. Einmalige Test-E-Mail beim ersten Durchlauf
+  // 2. Einmalige Startup-Test-E-Mail
   if (!hasSentStartupEmail) {
     await sendEmail(
       `✅ Render-Start bestätigt: Basis Bot läuft`,
@@ -65,7 +63,7 @@ async function tradingCycle() {
     console.log('📧 Startup-Test-E-Mail gesendet');
   }
 
-  // 3. Deepseek-Aufruf (wie zuvor)
+  // 3. Deepseek befragen
   const candleSummary = candles.slice(-3).map(c => `C:${c.close.toFixed(2)}`).join(', ');
   const prompt = `
 Du bist ein professioneller Krypto-Trader.
@@ -123,28 +121,7 @@ Zeit: ${new Date().toISOString()}
   }
 }
 
-// 5. Nur bei gültiger Aktion E-Mail senden
-if (decision.action && decision.action !== 'HOLD') {
-  const subject = `🚨 Signal: ${decision.action} ${symbol}`;
-  const text = `
-Preis: ${price.toFixed(2)} USDT
-Confidence: ${(decision.confidence * 100).toFixed(1)}%
-Grund: ${decision.reason || '—'}
-
-Datenquelle: Bitget Spot API
-Zeit: ${new Date().toISOString()}
-  `.trim();
-
-  await sendEmail(subject, text);
-}
-
-    console.log(`✅ Entscheidung: ${decision.action} | Conf: ${(decision.confidence * 100).toFixed(1)}%`);
-  } catch (error) {
-    console.error('💥 Deepseek-Fehler:', error.message);
-  }
-}
-""
-
+// Startfunktion
 function startTradingBot() {
   tradingCycle(); // Sofort starten
   setInterval(tradingCycle, 60_000); // Alle 60 Sekunden
