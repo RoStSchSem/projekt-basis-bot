@@ -24,7 +24,7 @@ async function sendEmail(subject, text) {
   try {
     await axios.post('https://api.resend.com/emails', {
       from: 'bot@basis.de',
-      to: ['deepseek-tradingbot@rossem.de'], // 🔁 DEINE E-MAIL HIER
+      to: ['deepseek-tradingbot@rossem.de'], // 🔁 DEINE E-MAIL
       subject: subject,
       text: text
     }, {
@@ -37,6 +37,9 @@ async function sendEmail(subject, text) {
 }
 
 
+
+// Globale Flag (außerhalb von tradingCycle)
+let hasSentStartupEmail = false;
 
 // ===== Autonomer Trading-Zyklus mit Deepseek + Resend =====
 async function tradingCycle() {
@@ -52,7 +55,17 @@ async function tradingCycle() {
     return;
   }
 
-  // 2. Kontext für Deepseek aufbauen
+  // 2. Einmalige Test-E-Mail beim ersten Durchlauf
+  if (!hasSentStartupEmail) {
+    await sendEmail(
+      `✅ Render-Start bestätigt: Basis Bot läuft`,
+      `Preis: ${price}\nZeit: ${new Date().toISOString()}\nStatus: OK – E-Mail-System funktioniert!`
+    );
+    hasSentStartupEmail = true;
+    console.log('📧 Startup-Test-E-Mail gesendet');
+  }
+
+  // 3. Deepseek-Aufruf (wie zuvor)
   const candleSummary = candles.slice(-3).map(c => `C:${c.close.toFixed(2)}`).join(', ');
   const prompt = `
 Du bist ein professioneller Krypto-Trader.
@@ -65,7 +78,6 @@ Antworte NUR im folgenden JSON-Format:
 Kein Text davor oder danach.
 `.trim();
 
-  // 3. Deepseek befragen
   try {
     const deepseekRes = await axios.post(
       'https://api.deepseek.com/chat/completions',
@@ -78,14 +90,11 @@ Kein Text davor oder danach.
           'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
           'Content-Type': 'application/json'
         },
-        timeout: 10000 // 10 Sekunden Timeout
+        timeout: 10000
       }
     );
 
     const raw = deepseekRes.data.choices[0].message.content.trim();
-    console.log('🧠 Deepseek Antwort:', raw);
-
-    // 4. JSON extrahieren
     const jsonMatch = raw.match(/\{[^{}]*\}/);
     if (!jsonMatch) {
       console.error('❌ Kein gültiges JSON in Deepseek-Antwort');
@@ -94,7 +103,7 @@ Kein Text davor oder danach.
 
     const decision = JSON.parse(jsonMatch[0]);
 
-    // 5. Nur bei gültiger Aktion E-Mail senden
+    // 4. Nur bei echtem Signal E-Mail senden
     if (decision.action && decision.action !== 'HOLD') {
       const subject = `🚨 Signal: ${decision.action} ${symbol}`;
       const text = `
@@ -107,7 +116,27 @@ Zeit: ${new Date().toISOString()}
       `.trim();
 
       await sendEmail(subject, text);
+      console.log(`✅ Signal gesendet: ${decision.action}`);
     }
+  } catch (error) {
+    console.error('💥 Deepseek-Fehler:', error.message);
+  }
+}
+
+// 5. Nur bei gültiger Aktion E-Mail senden
+if (decision.action && decision.action !== 'HOLD') {
+  const subject = `🚨 Signal: ${decision.action} ${symbol}`;
+  const text = `
+Preis: ${price.toFixed(2)} USDT
+Confidence: ${(decision.confidence * 100).toFixed(1)}%
+Grund: ${decision.reason || '—'}
+
+Datenquelle: Bitget Spot API
+Zeit: ${new Date().toISOString()}
+  `.trim();
+
+  await sendEmail(subject, text);
+}
 
     console.log(`✅ Entscheidung: ${decision.action} | Conf: ${(decision.confidence * 100).toFixed(1)}%`);
   } catch (error) {
