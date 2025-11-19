@@ -24,13 +24,13 @@ async function sendEmail(subject, text) {
   try {
     await axios.post('https://api.resend.com/emails', {
       from: 'Basis Bot <onboarding@resend.dev>',
-      to: ['deepseek-tradingbot@rossem.de'], // 🔁 Deine E-Mail
+      to: ['ros72.rs@gmail.com'], // 🔁 Deine E-Mail
       subject: subject,
       text: text
     }, {
       headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}` }
     });
-    console.log('✅ E-Mail gesendet');
+    console.log('✅ E-Mail gesendet an ros72.rs@gmail.com');
   } catch (error) {
     console.error('📧 Resend-Fehler:', error.message);
   }
