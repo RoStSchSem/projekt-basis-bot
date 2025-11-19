@@ -23,7 +23,7 @@ app.listen(PORT, '0.0.0.0', () => {
 async function sendEmail(subject, text) {
   try {
     await axios.post('https://api.resend.com/emails', {
-      from: 'bot@basis.de',
+      from: 'Basis Bot <onboarding@resend.dev>',
       to: ['deepseek-tradingbot@rossem.de'], // 🔁 Deine E-Mail
       subject: subject,
       text: text
