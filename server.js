@@ -1,4 +1,4 @@
-// server.js – Projekt Basis Bot (Render-kompatibel)
+// server.js – Qwenny – Multi-Symbol KI-Handelsbot
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -12,10 +12,10 @@ app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
-// Starte HTTP-Server (Render erkennt Port 10000)
+// Starte HTTP-Server
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🌐 Render: HTTP-Server läuft auf Port ${PORT}`);
-  console.log('🤖 Autonomer Trading-Bot wird gestartet...');
+  console.log(`🌐 Qwenny: HTTP-Server läuft auf Port ${PORT}`);
+  console.log('🤖 Qwenny wird gestartet...');
   startTradingBot();
 });
 
@@ -23,8 +23,8 @@ app.listen(PORT, '0.0.0.0', () => {
 async function sendEmail(subject, text) {
   try {
     await axios.post('https://api.resend.com/emails', {
-      from: 'Basis Bot <onboarding@resend.dev>',
-      to: ['ros72.rs@gmail.com'], // 🔁 Deine E-Mail
+      from: 'Qwenny <onboarding@resend.dev>', // ✅ Verifizierte Domain
+      to: ['ros72.rs@gmail.com'],             // ✅ Deine E-Mail
       subject: subject,
       text: text
     }, {
@@ -32,34 +32,50 @@ async function sendEmail(subject, text) {
     });
     console.log('✅ E-Mail gesendet an ros72.rs@gmail.com');
   } catch (error) {
-    console.error('📧 Resend-Fehler:', error.message);
+    console.error('📧 Resend-Fehler:', error.response?.data || error.message);
   }
 }
 
 // Globale Flag für Startup-Test
 let hasSentStartupEmail = false;
 
-// Autonomer Trading-Zyklus
 // Liste der zu überwachenden Symbole
-const SYMBOLS_TO_WATCH = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'SUIUSDT', 'XRPUST'];
+const SYMBOLS_TO_WATCH = [
+  'BTCUSDT',
+  'ETHUSDT',
+  'SOLUSDT',
+  'SUIUSDT',
+  'XRPUST'
+];
 
+// Autonomer Trading-Zyklus für alle Symbole
 async function tradingCycle() {
-  console.log(`\n🔄 Starte Multi-Symbol-Zyklus – ${new Date().toISOString()}`);
+  console.log(`\n🔄 Qwenny: Starte Multi-Symbol-Zyklus – ${new Date().toISOString()}`);
 
-  // 1.Gehe jedes Symbol durch
+  // Gehe jedes Symbol durch
   for (const symbol of SYMBOLS_TO_WATCH) {
     console.log(`🔍 Analysiere ${symbol}...`);
 
-    // 2.Hole Daten von Bitget
+    // Hole Daten von Bitget
     const price = await getSpotPrice(symbol);
     const candles = await getCandles(symbol, '15min', 5);
 
     if (price === null || candles.length === 0) {
       console.warn(`⚠️ Keine Daten für ${symbol} – überspringe`);
-      continue; // Nächstes Symbol
+      continue;
     }
 
-    // 3. Deepseek befragen
+    // Einmalige Startup-Test-E-Mail (nur beim allerersten Durchlauf)
+    if (!hasSentStartupEmail) {
+      await sendEmail(
+        `✅ Qwenny: Startup bestätigt – läuft für alle Symbole`,
+        `Erstes Symbol: ${symbol}\nPreis: ${price}\nZeit: ${new Date().toISOString()}\nStatus: OK – E-Mail-System funktioniert!`
+      );
+      hasSentStartupEmail = true;
+      console.log('📧 Qwenny: Startup-Test-E-Mail gesendet');
+    }
+
+    // Deepseek befragen
     const candleSummary = candles.slice(-3).map(c => `C:${c.close.toFixed(2)}`).join(', ');
     const prompt = `
 Du bist ein professioneller Krypto-Trader.
@@ -89,14 +105,14 @@ Kein Text davor oder danach.
       const jsonMatch = raw.match(/\{[^{}]*\}/);
       if (!jsonMatch) {
         console.error(`❌ Kein gültiges JSON für ${symbol}`);
-        continue; // Nächstes Symbol
+        continue;
       }
 
       const decision = JSON.parse(jsonMatch[0]);
 
-      // 4. Nur bei Signal (nicht HOLD) E-Mail senden
+      // Nur bei Signal (nicht HOLD) E-Mail senden
       if (decision.action && decision.action !== 'HOLD') {
-        const subject = `🚨 Signal: ${decision.action} ${symbol}`;
+        const subject = `🚨 Qwenny Signal: ${decision.action} ${symbol}`;
         const text = `
 Preis: ${price.toFixed(2)} USDT
 Confidence: ${(decision.confidence * 100).toFixed(1)}%
@@ -107,17 +123,18 @@ Zeit: ${new Date().toISOString()}
         `.trim();
 
         await sendEmail(subject, text);
-        console.log(`✅ Signal gesendet: ${decision.action} ${symbol}`);
+        console.log(`✅ Qwenny: Signal gesendet: ${decision.action} ${symbol}`);
       } else {
-        console.log(`➡️ Kein Signal für ${symbol} – HOLD`);
+        console.log(`➡️ Qwenny: Kein Signal für ${symbol} – HOLD`);
       }
     } catch (error) {
-      console.error(`💥 Fehler bei ${symbol}:`, error.message);
+      console.error(`💥 Qwenny: Fehler bei ${symbol}:`, error.message);
     }
   }
 
-  console.log(`✅ Multi-Symbol-Zyklus abgeschlossen`);
+  console.log(`✅ Qwenny: Multi-Symbol-Zyklus abgeschlossen`);
 }
+
 // Startfunktion
 function startTradingBot() {
   tradingCycle(); // Sofort starten
