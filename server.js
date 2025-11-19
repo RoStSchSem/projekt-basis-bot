@@ -1,63 +1,28 @@
-// server.js – Autonomer Bot mit Bitget + Deepseek + Resend
+// server.js – Render-kompatibel: HTTP-Server + autonomer Bot
 require('dotenv').config();
+const express = require('express');
 const axios = require('axios');
 const { getSpotPrice, getCandles } = require('./bitgetClient');
 
-// Deine E-Mail – sicherstellen, dass sie korrekt ist!
-const YOUR_EMAIL = 'deepseek-tradingbot@rossem.de';
+const app = express();
+const PORT = process.env.PORT || 10000; // Render erwartet 10000
 
-// Resend-E-Mail senden
-async function sendEmail(subject, text) {
-  try {
-    await axios.post('https://api.resend.com/emails', {
-      from: 'bot@basis.de',
-      to: [YOUR_EMAIL],
-      subject: subject,
-      text: text
-    }, {
-      headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}` }
-    });
-    console.log('✅ E-Mail gesendet an', YOUR_EMAIL);
-  } catch (error) {
-    console.error('📧 E-Mail-Fehler:', error.message);
-  }
-}
+// Health-Check für Render
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
 
-// Deepseek befragen
-async function askDeepseek(symbol, price, candles) {
-  const summary = candles.slice(-3).map(c => `C:${c.close}`).join(', ');
-  const prompt = `
-KI-Handelssystem.
-Symbol: ${symbol}
-Aktueller Preis: ${price}
-Letzte Candles (15min): ${summary}
-Entscheide: LONG, SHORT oder HOLD.
-Antworte NUR als JSON:
-{"action":"...","confidence":0.0,"reason":"..."}
-`.trim();
+// Starte HTTP-Server – Render erkennt den Port und hält den Prozess am Leben
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🌐 Render: HTTP-Server läuft auf Port ${PORT}`);
+  console.log('🤖 Autonomer Trading-Bot wird gestartet...');
+  startTradingBot();
+});
 
-  try {
-    const res = await axios.post('https://api.deepseek.com/chat/completions', {
-      model: 'deepseek-chat',
-      messages: [{ role: 'user', content: prompt }]
-    }, {
-      headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}` }
-    });
-
-    const raw = res.data.choices[0].message.content.trim();
-    const jsonMatch = raw.match(/\{[^{}]*\}/);
-    if (!jsonMatch) throw new Error('Kein gültiges JSON');
-    return JSON.parse(jsonMatch[0]);
-  } catch (err) {
-    console.error('🧠 Deepseek-Fehler:', err.message);
-    return { action: 'HOLD', confidence: 0, reason: 'API-Fehler' };
-  }
-}
-
-// Haupt-Zyklus
+// ===== Autonomer Trading-Bot =====
 async function tradingCycle() {
   const symbol = 'BTCUSDT';
-  console.log(`\n🔄 Starte Zyklus für ${symbol} – ${new Date().toISOString()}`);
+  console.log(`\n🔄 Trading-Zyklus gestartet für ${symbol} – ${new Date().toISOString()}`);
 
   const price = await getSpotPrice(symbol);
   const candles = await getCandles(symbol, '15min', 5);
@@ -67,16 +32,11 @@ async function tradingCycle() {
     return;
   }
 
-  const decision = await askDeepseek(symbol, price, candles);
-
-  if (decision.action !== 'HOLD') {
-    const text = `Preis: ${price}\nConfidence: ${(decision.confidence * 100).toFixed(1)}%\nGrund: ${decision.reason}`;
-    await sendEmail(`🚨 Signal: ${decision.action} ${symbol}`, text);
-  }
-
-  console.log(`✅ Entscheidung: ${decision.action} | Preis: ${price} | Conf: ${(decision.confidence * 100).toFixed(1)}%`);
+  // Deepseek-Aufruf (optional – momentan nur HOLD)
+  console.log(`✅ Preis: ${price}, Candles: ${candles.length}`);
 }
 
-// Starte sofort und dann alle 60 Sekunden
-tradingCycle();
-setInterval(tradingCycle, 60_000);
+function startTradingBot() {
+  tradingCycle(); // Sofort starten
+  setInterval(tradingCycle, 60_000); // Alle 60 Sekunden
+}
