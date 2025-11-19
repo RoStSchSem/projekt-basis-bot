@@ -40,32 +40,28 @@ async function sendEmail(subject, text) {
 let hasSentStartupEmail = false;
 
 // Autonomer Trading-Zyklus
+// Liste der zu überwachenden Symbole
+const SYMBOLS_TO_WATCH = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'SUIUSDT', 'XRPUST'];
+
 async function tradingCycle() {
-  const symbol = 'BTCUSDT';
-  console.log(`\n🔄 Trading-Zyklus gestartet für ${symbol} – ${new Date().toISOString()}`);
+  console.log(`\n🔄 Starte Multi-Symbol-Zyklus – ${new Date().toISOString()}`);
 
-  // 1. Bitget-Daten holen
-  const price = await getSpotPrice(symbol);
-  const candles = await getCandles(symbol, '15min', 5);
+  // 1.Gehe jedes Symbol durch
+  for (const symbol of SYMBOLS_TO_WATCH) {
+    console.log(`🔍 Analysiere ${symbol}...`);
 
-  if (price === null || candles.length === 0) {
-    console.warn('⚠️ Keine Bitget-Daten – überspringe Zyklus');
-    return;
-  }
+    // 2.Hole Daten von Bitget
+    const price = await getSpotPrice(symbol);
+    const candles = await getCandles(symbol, '15min', 5);
 
-  // 2. Einmalige Startup-Test-E-Mail
-  if (!hasSentStartupEmail) {
-    await sendEmail(
-      `✅ Render-Start bestätigt: Basis Bot läuft`,
-      `Preis: ${price}\nZeit: ${new Date().toISOString()}\nStatus: OK – E-Mail-System funktioniert!`
-    );
-    hasSentStartupEmail = true;
-    console.log('📧 Startup-Test-E-Mail gesendet');
-  }
+    if (price === null || candles.length === 0) {
+      console.warn(`⚠️ Keine Daten für ${symbol} – überspringe`);
+      continue; // Nächstes Symbol
+    }
 
-  // 3. Deepseek befragen
-  const candleSummary = candles.slice(-3).map(c => `C:${c.close.toFixed(2)}`).join(', ');
-  const prompt = `
+    // 3. Deepseek befragen
+    const candleSummary = candles.slice(-3).map(c => `C:${c.close.toFixed(2)}`).join(', ');
+    const prompt = `
 Du bist ein professioneller Krypto-Trader.
 Symbol: ${symbol}
 Aktueller Preis: ${price.toFixed(2)} USDT
@@ -76,51 +72,52 @@ Antworte NUR im folgenden JSON-Format:
 Kein Text davor oder danach.
 `.trim();
 
-  try {
-    const deepseekRes = await axios.post(
-      'https://api.deepseek.com/chat/completions',
-      {
-        model: 'deepseek-chat',
-        messages: [{ role: 'user', content: prompt }]
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-          'Content-Type': 'application/json'
+    try {
+      const deepseekRes = await axios.post(
+        'https://api.deepseek.com/chat/completions',
+        {
+          model: 'deepseek-chat',
+          messages: [{ role: 'user', content: prompt }]
         },
-        timeout: 10000
+        {
+          headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}` },
+          timeout: 10000
+        }
+      );
+
+      const raw = deepseekRes.data.choices[0].message.content.trim();
+      const jsonMatch = raw.match(/\{[^{}]*\}/);
+      if (!jsonMatch) {
+        console.error(`❌ Kein gültiges JSON für ${symbol}`);
+        continue; // Nächstes Symbol
       }
-    );
 
-    const raw = deepseekRes.data.choices[0].message.content.trim();
-    const jsonMatch = raw.match(/\{[^{}]*\}/);
-    if (!jsonMatch) {
-      console.error('❌ Kein gültiges JSON in Deepseek-Antwort');
-      return;
-    }
+      const decision = JSON.parse(jsonMatch[0]);
 
-    const decision = JSON.parse(jsonMatch[0]);
-
-    // 4. Nur bei echtem Signal E-Mail senden
-    if (decision.action && decision.action !== 'HOLD') {
-      const subject = `🚨 Signal: ${decision.action} ${symbol}`;
-      const text = `
+      // 4. Nur bei Signal (nicht HOLD) E-Mail senden
+      if (decision.action && decision.action !== 'HOLD') {
+        const subject = `🚨 Signal: ${decision.action} ${symbol}`;
+        const text = `
 Preis: ${price.toFixed(2)} USDT
 Confidence: ${(decision.confidence * 100).toFixed(1)}%
 Grund: ${decision.reason || '—'}
 
 Datenquelle: Bitget Spot API
 Zeit: ${new Date().toISOString()}
-      `.trim();
+        `.trim();
 
-      await sendEmail(subject, text);
-      console.log(`✅ Signal gesendet: ${decision.action}`);
+        await sendEmail(subject, text);
+        console.log(`✅ Signal gesendet: ${decision.action} ${symbol}`);
+      } else {
+        console.log(`➡️ Kein Signal für ${symbol} – HOLD`);
+      }
+    } catch (error) {
+      console.error(`💥 Fehler bei ${symbol}:`, error.message);
     }
-  } catch (error) {
-    console.error('💥 Deepseek-Fehler:', error.message);
   }
-}
 
+  console.log(`✅ Multi-Symbol-Zyklus abgeschlossen`);
+}
 // Startfunktion
 function startTradingBot() {
   tradingCycle(); // Sofort starten
