@@ -1,4 +1,4 @@
-// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit technischen Indikatoren, Telegram & E-Mail-Backup, DEBUG-Modus
+// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit technischen Indikatoren, Telegram & E-Mail-Backup, DEBUG-Modus, Speicherüberwachung
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -20,6 +20,12 @@ function log(level, message) {
     console.log(`🐛 DEBUG: ${message}`); // Debug-Logs mit Markierung
   }
 }
+
+// ✅ Speicherüberwachung (alle 30 Sekunden)
+setInterval(() => {
+  const used = process.memoryUsage();
+  log('debug', `📊 Speicher: RSS=${Math.round(used.rss / 1024 / 1024 * 100) / 100} MB`);
+}, 30000);
 
 // Health-Check für Railway
 app.get('/health', (req, res) => {

@@ -1,18 +1,16 @@
-// bitgetClient.js – Korrekter Bitget Spot API-Client (ohne Auth)
+// bitgetClient.js – Korrigierte Version für Qwenny
 const axios = require('axios');
 
 const BITGET_BASE = 'https://api.bitget.com';
 
-/**
- * Holt den aktuellen Spot-Preis für ein Symbol (z. B. 'BTCUSDT')
- */
-
+// Hole aktuellen Spot-Preis
 async function getSpotPrice(symbol = 'BTCUSDT') {
   try {
-    const url = `${BITGET_BASE}/api/v2/spot/market/tickers?symbol=${symbol}`;
-    const res = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const res = await axios.get(`${BITGET_BASE}/api/v2/spot/market/tickers`, {
+      params: { symbol }
+    });
     if (res.data.code === '00000' && res.data.data?.[0]?.lastPr) {
-      return parseFloat(res.data.data[0].lastPr); // ⬅️ lastPr statt last
+      return parseFloat(res.data.data[0].lastPr);
     }
     console.error('Bitget API: Kein Preis in Antwort');
     return null;
@@ -22,19 +20,14 @@ async function getSpotPrice(symbol = 'BTCUSDT') {
   }
 }
 
-/**
- * Holt historische Candles (Klines) für ein Symbol
- * Gültige Zeitintervalle: '1min', '3min', '5min', '15min', '30min', '1h', '4h', '6h', '12h', '1day', ...
- */
-async function getCandles(symbol = 'BTCUSDT', timeframe = '15min', limit = 5) {
+// Hole Candles (Klines)
+async function getCandles(symbol = 'BTCUSDT', timeframe = '15min', limit = 50) {
   try {
-    const url = `${BITGET_BASE}/api/v2/spot/market/candles?symbol=${symbol}&granularity=${timeframe}&limit=${limit}`;
-    console.log('🕯️ Candle-URL:', url);
-    const res = await axios.get(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0' }
+    const res = await axios.get(`${BITGET_BASE}/api/v2/spot/market/candles`, {
+      params: { symbol, granularity: timeframe, limit }
     });
-    console.log('📄 Candle-Antwort:', res.data);
     if (res.data.code === '00000' && Array.isArray(res.data.data)) {
+      // Jedes Element in `res.data.data` ist ein Array: [ts, open, high, low, close, volume, ...]
       return res.data.data.map(c => ({
         timestamp: parseInt(c[0]),
         open: parseFloat(c[1]),
@@ -47,7 +40,7 @@ async function getCandles(symbol = 'BTCUSDT', timeframe = '15min', limit = 5) {
     console.error('Bitget API: Ungültige Candles-Antwort');
     return [];
   } catch (error) {
-    console.error('🕯️ Candle-Fehler:', error.response?.data || error.message);
+    console.error('🕯️ Candle-Fehler:', error.message);
     return [];
   }
 }
