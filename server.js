@@ -1,4 +1,4 @@
-// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit technischen Indikatoren
+// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit technischen Indikatoren und DEBUG-Modus
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -10,6 +10,17 @@ const ti = require('technicalindicators');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+// ✅ Neue Log-Funktion mit DEBUG-Unterstützung
+function log(level, message) {
+  const debugEnabled = process.env.DEBUG === 'true';
+  if (level === 'debug' && !debugEnabled) return; // Zeige Debug nur, wenn DEBUG=true
+  if (level === 'info' || level === 'error' || level === 'warn') {
+    console.log(message); // Info, Warn, Error immer anzeigen
+  } else if (level === 'debug') {
+    console.log(`🐛 DEBUG: ${message}`); // Debug-Logs mit Markierung
+  }
+}
+
 // Health-Check für Railway
 app.get('/health', (req, res) => {
   res.status(200).send('OK');
@@ -17,8 +28,8 @@ app.get('/health', (req, res) => {
 
 // Starte HTTP-Server
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🌐 Qwenny: HTTP-Server läuft auf Port ${PORT}`);
-  console.log('🤖 Qwenny wird gestartet...');
+  log('info', `🌐 Qwenny: HTTP-Server läuft auf Port ${PORT}`);
+  log('info', '🤖 Qwenny wird gestartet...');
   startTradingBot();
 });
 
@@ -33,9 +44,9 @@ async function sendEmail(subject, text) {
     }, {
       headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}` }
     });
-    console.log('✅ E-Mail gesendet an ros72.rs@gmail.com');
+    log('info', '✅ E-Mail gesendet an ros72.rs@gmail.com');
   } catch (error) {
-    console.error('📧 Resend-Fehler:', error.response?.data || error.message);
+    log('error', `📧 Resend-Fehler: ${error.message}`);
   }
 }
 
@@ -47,26 +58,29 @@ const SYMBOLS_TO_WATCH = [
   'BTCUSDT',
   'ETHUSDT',
   'SOLUSDT',
-  'SUIUSDT', // Korrigiert: Spot statt Futures
+  'SUIUSDT',
   'XRPUSDT'
 ];
 
 // Autonomer Trading-Zyklus für alle Symbole
 async function tradingCycle() {
-  console.log(`\n🔄 Qwenny: Starte Multi-Symbol-Zyklus – ${new Date().toISOString()}`);
+  log('info', `\n🔄 Qwenny: Starte Multi-Symbol-Zyklus – ${new Date().toISOString()}`);
 
-  // Gehe jedes Symbol durch
   for (const symbol of SYMBOLS_TO_WATCH) {
-    console.log(`🔍 Analysiere ${symbol}...`);
+    log('debug', `🔍 Analysiere ${symbol}...`);
 
     // Hole Daten von Bitget
     const price = await getSpotPrice(symbol);
     const candles = await getCandles(symbol, '15min', 50); // Mehr Candles für Indikatoren
 
     if (price === null || candles.length === 0) {
-      console.warn(`⚠️ Keine Daten für ${symbol} – überspringe`);
+      log('warn', `⚠️ Keine Daten für ${symbol} – überspringe`);
       continue;
     }
+
+    // Candle-URL und Antwort (nur im Debug-Modus)
+    log('debug', `🕯️ Candle-URL: https://api.bitget.com/api/v2/spot/market/candles?symbol=${symbol}&granularity=15min&limit=50`);
+    log('debug', `📄 Candle-Antwort: ${JSON.stringify(candles.slice(-2))}`); // Nur letzte 2 Candles anzeigen, wenn Debug
 
     // Einmalige Startup-Test-E-Mail (nur beim allerersten Durchlauf)
     if (!hasSentStartupEmail) {
@@ -75,12 +89,14 @@ async function tradingCycle() {
         `Erstes Symbol: ${symbol}\nPreis: ${price}\nZeit: ${new Date().toISOString()}\nStatus: OK – E-Mail-System funktioniert!`
       );
       hasSentStartupEmail = true;
-      console.log('📧 Qwenny: Startup-Test-E-Mail gesendet');
+      log('info', '📧 Qwenny: Startup-Test-E-Mail gesendet');
     }
 
     // Technische Indikatoren berechnen
     const prices = candles.map(c => c.close);
     const volumes = candles.map(c => c.volume);
+    const highs = candles.map(c => c.high);
+    const lows = candles.map(c => c.low);
 
     // RSI (14)
     let rsi = 'n/a';
@@ -109,8 +125,6 @@ async function tradingCycle() {
     // Stochastik (14,3,3)
     let stochK = 'n/a', stochD = 'n/a';
     if (prices.length >= 14) {
-      const highs = candles.map(c => c.high);
-      const lows = candles.map(c => c.low);
       const stoch = ti.stochastic({
         high: highs,
         low: lows,
@@ -128,11 +142,8 @@ async function tradingCycle() {
     // Volumen (letztes Intervall)
     const volume = volumes[volumes.length - 1];
 
-
-// 🔧 DEBUG: Zeige Indikatoren in Logs
-console.log(`📊 Indikatoren für ${symbol}: RSI=${typeof rsi === 'number' ? rsi.toFixed(2) : rsi}, 
-MACD=${typeof macd === 'number' ? macd.toFixed(2) : macd}, 
-StochK=${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, Volume=${volume}`);
+    // DEBUG: Zeige Indikatoren in Logs
+    log('debug', `📊 Indikatoren für ${symbol}: RSI=${typeof rsi === 'number' ? rsi.toFixed(2) : rsi}, MACD=${typeof macd === 'number' ? macd.toFixed(2) : macd}, StochK=${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, Volume=${volume}`);
 
     // Deepseek befragen (neuer geänderter Prompt mit Indikatoren)
     const candleSummary = candles.slice(-3).map(c => `C:${c.close.toFixed(2)}`).join(', ');
@@ -184,7 +195,7 @@ Kein Text davor oder danach.
       const raw = deepseekRes.data.choices[0].message.content.trim();
       const jsonMatch = raw.match(/\{[^{}]*\}/);
       if (!jsonMatch) {
-        console.error(`❌ Kein gültiges JSON für ${symbol}`);
+        log('error', `❌ Kein gültiges JSON für ${symbol}`);
         continue;
       }
 
@@ -205,16 +216,16 @@ Zeit: ${new Date().toISOString()}
         `.trim();
 
         await sendEmail(subject, text);
-        console.log(`✅ Qwenny: Signal gesendet: ${decision.action} ${symbol}`);
+        log('info', `✅ Qwenny: Signal gesendet: ${decision.action} ${symbol}`);
       } else {
-        console.log(`➡️ Qwenny: Kein Signal für ${symbol} – HOLD`);
+        log('debug', `➡️ Qwenny: Kein Signal für ${symbol} – HOLD`);
       }
     } catch (error) {
-      console.error(`💥 Qwenny: Fehler bei ${symbol}:`, error.message);
+      log('error', `💥 Qwenny: Fehler bei ${symbol}: ${error.message}`);
     }
   }
 
-  console.log(`✅ Qwenny: Multi-Symbol-Zyklus abgeschlossen`);
+  log('info', `✅ Qwenny: Multi-Symbol-Zyklus abgeschlossen`);
 }
 
 // Startfunktion
