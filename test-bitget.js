@@ -5,7 +5,7 @@ async function test() {
   const price = await getSpotPrice('BTCUSDT');
   console.log('✅ Preis:', price);
 
-  const candles = await getCandles('BTCUSDT', '15min', 5);
+  const candles = await getCandles('BTCUSDT', '15min', 50);
   console.log('✅ Anzahl Candles:', candles.length);
   if (candles.length > 0) {
     console.log('Letzte Candle:', candles[0]);

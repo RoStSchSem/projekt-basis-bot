@@ -128,6 +128,12 @@ async function tradingCycle() {
     // Volumen (letztes Intervall)
     const volume = volumes[volumes.length - 1];
 
+
+// 🔧 DEBUG: Zeige Indikatoren in Logs
+console.log(`📊 Indikatoren für ${symbol}: RSI=${typeof rsi === 'number' ? rsi.toFixed(2) : rsi}, 
+MACD=${typeof macd === 'number' ? macd.toFixed(2) : macd}, 
+StochK=${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, Volume=${volume}`);
+
     // Deepseek befragen (neuer geänderter Prompt mit Indikatoren)
     const candleSummary = candles.slice(-3).map(c => `C:${c.close.toFixed(2)}`).join(', ');
 
