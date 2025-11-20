@@ -1,2 +1,2 @@
 # projekt-basis-bot
-„Basis Bot – Deepseek + TradingView + Render“
+„Basis Bot – Deepseek + TradingView + Railway“

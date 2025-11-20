@@ -1,13 +1,16 @@
-// server.js – Qwenny – Multi-Symbol KI-Handelsbot
+// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit technischen Indikatoren
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const { getSpotPrice, getCandles } = require('./bitgetClient');
 
+// Technische Indikatoren-Bibliothek
+const ti = require('technicalindicators');
+
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Health-Check für Render
+// Health-Check für Railway
 app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
@@ -44,7 +47,7 @@ const SYMBOLS_TO_WATCH = [
   'BTCUSDT',
   'ETHUSDT',
   'SOLUSDT',
-  'SUIUSDT_UMCBL',
+  'SUIUSDT', // Korrigiert: Spot statt Futures
   'XRPUSDT'
 ];
 
@@ -58,7 +61,7 @@ async function tradingCycle() {
 
     // Hole Daten von Bitget
     const price = await getSpotPrice(symbol);
-    const candles = await getCandles(symbol, '15min', 5);
+    const candles = await getCandles(symbol, '15min', 50); // Mehr Candles für Indikatoren
 
     if (price === null || candles.length === 0) {
       console.warn(`⚠️ Keine Daten für ${symbol} – überspringe`);
@@ -75,16 +78,87 @@ async function tradingCycle() {
       console.log('📧 Qwenny: Startup-Test-E-Mail gesendet');
     }
 
-    // Deepseek befragen
+    // Technische Indikatoren berechnen
+    const prices = candles.map(c => c.close);
+    const volumes = candles.map(c => c.volume);
+
+    // RSI (14)
+    let rsi = 'n/a';
+    if (prices.length >= 14) {
+      const rsiValues = ti.rsi({ values: prices, period: 14 });
+      rsi = rsiValues[rsiValues.length - 1];
+    }
+
+    // MACD (12,26,9)
+    let macd = 'n/a', macdSignal = 'n/a', macdHistogram = 'n/a';
+    if (prices.length >= 35) { // Mindestens 26 + 9 für MACD
+      const macdResult = ti.macd({
+        values: prices,
+        fastPeriod: 12,
+        slowPeriod: 26,
+        signalPeriod: 9
+      });
+      const latestMacd = macdResult[macdResult.length - 1];
+      if (latestMacd) {
+        macd = latestMacd.MACD;
+        macdSignal = latestMacd.signal;
+        macdHistogram = latestMacd.histogram;
+      }
+    }
+
+    // Stochastik (14,3,3)
+    let stochK = 'n/a', stochD = 'n/a';
+    if (prices.length >= 14) {
+      const highs = candles.map(c => c.high);
+      const lows = candles.map(c => c.low);
+      const stoch = ti.stochastic({
+        high: highs,
+        low: lows,
+        close: prices,
+        period: 14,
+        signalPeriod: 3
+      });
+      const latestStoch = stoch[stoch.length - 1];
+      if (latestStoch) {
+        stochK = latestStoch.k;
+        stochD = latestStoch.d;
+      }
+    }
+
+    // Volumen (letztes Intervall)
+    const volume = volumes[volumes.length - 1];
+
+    // Deepseek befragen (neuer geänderter Prompt mit Indikatoren)
     const candleSummary = candles.slice(-3).map(c => `C:${c.close.toFixed(2)}`).join(', ');
+
     const prompt = `
-Du bist ein professioneller Krypto-Trader.
+Du bist ein professioneller Krypto-Trader in der Alpha Arena.
 Symbol: ${symbol}
 Aktueller Preis: ${price.toFixed(2)} USDT
 Letzte Candles (15min): ${candleSummary}
+
+Technische Indikatoren (berechnet aus letzten 15min-Daten):
+- RSI (14): ${typeof rsi === 'number' ? rsi.toFixed(2) : rsi}
+- MACD (12,26,9): ${typeof macd === 'number' ? macd.toFixed(2) : macd} (Signal: ${typeof macdSignal === 'number' ? macdSignal.toFixed(2) : macdSignal})
+- Stochastik (14,3,3): %K: ${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, %D: ${typeof stochD === 'number' ? stochD.toFixed(2) : stochD}
+- Volumen: ${volume}
+
+Analysiere:
+- Ist der Markt überkauft (RSI > 70) oder überverkauft (RSI < 30)?
+- Gibt es einen Bullish/Bearish-Crossover bei MACD oder Stochastik?
+- Ist das Volumen stark genug, um den Trend zu bestätigen?
+- Ist der aktuelle Preis sinnvoll für LONG/SHORT/HOLD?
+
 Entscheide: LONG, SHORT oder HOLD.
 Antworte NUR im folgenden JSON-Format:
-{"action":"...","confidence":0.0,"reason":"..."}
+{
+  "action": "...",
+  "entry_price": 0.00,
+  "stop_loss": 0.00,
+  "take_profit": 0.00,
+  "confidence": 0.0,
+  "reason": "..."
+}
 Kein Text davor oder danach.
 `.trim();
 
@@ -114,7 +188,9 @@ Kein Text davor oder danach.
       if (decision.action && decision.action !== 'HOLD') {
         const subject = `🚨 Qwenny Signal: ${decision.action} ${symbol}`;
         const text = `
-Preis: ${price.toFixed(2)} USDT
+Einstieg: ${decision.entry_price} USDT
+Stop-Loss: ${decision.stop_loss} USDT
+Take-Profit: ${decision.take_profit} USDT
 Confidence: ${(decision.confidence * 100).toFixed(1)}%
 Grund: ${decision.reason || '—'}
 
