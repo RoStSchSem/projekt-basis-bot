@@ -1,4 +1,4 @@
-// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit 15min + 1h Trend-Analyse, Alpha-Arena-Prompt, Telegram, Confidence 75%
+// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit Alpha-Arena-Prompt, Telegram, DEBUG-Modus, Speicherüberwachung
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -84,17 +84,16 @@ async function tradingCycle() {
 
     // Hole Daten von Bitget
     const price = await getSpotPrice(symbol);
-    const candles15min = await getCandles(symbol, '15min', 50); // Mehr Candles für Indikatoren
-    const candles1h = await getCandles(symbol, '60min', 50); // Neue 1h-Candles
+    const candles = await getCandles(symbol, '15min', 50); // Mehr Candles für Indikatoren
 
-    if (price === null || candles15min.length === 0) {
-      log('warn', `⚠️ Keine 15min-Daten für ${symbol} – überspringe`);
+    if (price === null || candles.length === 0) {
+      log('warn', `⚠️ Keine Daten für ${symbol} – überspringe`);
       continue;
     }
 
     // Candle-URL und Antwort (nur im Debug-Modus)
     log('debug', `🕯️ Candle-URL: https://api.bitget.com/api/v2/spot/market/candles?symbol=${symbol}&granularity=15min&limit=50`);
-    log('debug', `📄 Candle-Antwort: ${JSON.stringify(candles15min.slice(-2))}`); // Nur letzte 2 Candles anzeigen, wenn Debug
+    log('debug', `📄 Candle-Antwort: ${JSON.stringify(candles.slice(-2))}`); // Nur letzte 2 Candles anzeigen, wenn Debug
 
     // Einmalige Startup-Test-Nachricht (nur beim allerersten Durchlauf)
     if (!hasSentStartupMessage) {
@@ -110,11 +109,11 @@ async function tradingCycle() {
       }
     }
 
-    // Technische Indikatoren aus 15min-Candles
-    const prices = candles15min.map(c => c.close);
-    const volumes = candles15min.map(c => c.volume);
-    const highs = candles15min.map(c => c.high);
-    const lows = candles15min.map(c => c.low);
+    // Technische Indikatoren berechnen
+    const prices = candles.map(c => c.close);
+    const volumes = candles.map(c => c.volume);
+    const highs = candles.map(c => c.high);
+    const lows = candles.map(c => c.low);
 
     // RSI (14)
     let rsi = 'n/a';
@@ -160,31 +159,13 @@ async function tradingCycle() {
     // Volumen (letztes Intervall)
     const volume = volumes[volumes.length - 1];
 
-    // Bestimme den Trend aus den letzten 3 Candles (kurzfristig)
-    const last3Candles = candles15min.slice(-3);
-    const trend15min = last3Candles.every((c, i, arr) => i === 0 || c.close < arr[i - 1].close) ? 'down' :
+    // Bestimme den Trend aus den letzten 3 Candles
+    const last3Candles = candles.slice(-3);
+    const trend = last3Candles.every((c, i, arr) => i === 0 || c.close < arr[i - 1].close) ? 'down' :
                   last3Candles.every((c, i, arr) => i === 0 || c.close > arr[i - 1].close) ? 'up' : 'sideways';
 
-    // 🔍 Berechne den 1h-Trend (basierend auf 20-EMA)
-    let trend1h = 'n/a';
-    if (candles1h.length >= 20) {
-      const prices1h = candles1h.map(c => c.close);
-      const ema20_1h = ti.ema({ values: prices1h, period: 20 }).slice(-1)[0];
-      const currentPrice1h = prices1h[prices1h.length - 1];
-
-      if (currentPrice1h > ema20_1h) {
-        trend1h = 'up';
-      } else if (currentPrice1h < ema20_1h) {
-        trend1h = 'down';
-      } else {
-        trend1h = 'sideways';
-      }
-    } else {
-      log('debug', ` candle-Book für 1h-${symbol} hat zu wenige Daten (<20)`);
-    }
-
     // DEBUG: Zeige Indikatoren in Logs
-    log('debug', `📊 Indikatoren für ${symbol}: RSI=${typeof rsi === 'number' ? rsi.toFixed(2) : rsi}, MACD=${typeof macd === 'number' ? macd.toFixed(2) : macd}, StochK=${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, Volume=${volume}, 15min-Trend=${trend15min}, 1h-Trend=${trend1h}`);
+    log('debug', `📊 Indikatoren für ${symbol}: RSI=${typeof rsi === 'number' ? rsi.toFixed(2) : rsi}, MACD=${typeof macd === 'number' ? macd.toFixed(2) : macd}, StochK=${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, Volume=${volume}, Trend=${trend}`);
 
     // 🔍 Hole zusätzliche Daten von Bitget (z. B. Orderbuch, Funding Rate, Open Interest)
     // Beispiel-Endpunkte (müssen ggf. angepasst werden je nach Bitget API)
@@ -204,8 +185,8 @@ async function tradingCycle() {
       log('debug', ` candle-Book für ${symbol} nicht verfügbar: ${e.message}`);
     }
 
-    // Deepseek befragen (Alpha-Arena-Prompt für Spot + Bitget + 1h-Trend)
-    const candleSummary = candles15min.slice(-3).map(c => `C:${c.close.toFixed(2)}`).join(', ');
+    // Deepseek befragen (Alpha-Arena-Prompt für Spot + Bitget)
+    const candleSummary = candles.slice(-3).map(c => `C:${c.close.toFixed(2)}`).join(', ');
 
     const prompt = `
 Du bist ein professioneller Krypto-Trader in der Alpha Arena.
@@ -227,15 +208,6 @@ TECHNISCHE INDIKATOREN (berechnet aus letzten 15min-Daten):
 - Stochastik (14,3,3): %K: ${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, %D: ${typeof stochD === 'number' ? stochD.toFixed(2) : stochD}
 - Volumen: ${volume}
 
-TREND-ANALYSE:
-- 15min-Trend: ${trend15min} (basierend auf letzten 3 Candles)
-- 1h-Trend: ${trend1h} (basierend auf 20-EMA über 1h-Candles)
-
-WICHTIG: Der 1h-Trend ist dominanter als der 15min-Trend.
-Wenn der 1h-Trend 'down' ist, ist dies ein starkes Signal für SHORT, auch wenn der 15min-Trend 'up' zeigt.
-Wenn der 1h-Trend 'up' ist, ist dies ein starkes Signal für LONG, auch wenn der 15min-Trend 'down' zeigt.
-Wenn beide Trends 'sideways' oder 'n/a' sind, dann achte auf RSI und Stochastik.
-
 KONTEXT DEINES KONTOS (simuliert):
 - Kontostand: 10000 USDT
 - Verfügbares Guthaben: 9500 USDT
@@ -250,6 +222,11 @@ ANALYSE:
 - Ist das Volumen stark genug, um den Trend zu bestätigen?
 - Ist das Orderbuch bullish (mehr Käufer) oder bearish (mehr Verkäufer)?
 - Ist der aktuelle Preis sinnvoll für LONG/SHORT/HOLD?
+
+WICHTIG: Der aktuelle Trend ist: ${trend}. 
+- Wenn der Trend abwärts ist, dann ist das ein starkes Signal für SHORT, auch wenn RSI überverkauft ist.
+- Wenn der Trend aufwärts ist, dann ist das ein starkes Signal für LONG, auch wenn RSI überkauft ist.
+- Wenn der Trend seitwärts ist, dann achte auf RSI und Stochastik.
 
 ENTSCHEIDUNG:
 - Entweder: LONG, SHORT oder HOLD
@@ -294,7 +271,7 @@ Kein Text davor oder danach.
 
       const decision = JSON.parse(jsonMatch[0]);
 
-      // 🔍 Nur bei Signal (nicht HOLD) UND Confidence >= 75% Nachricht senden
+      // 🔍 NEU: Nur bei Signal (nicht HOLD) UND Confidence >= 75% Nachricht senden
       if (decision.action && decision.action !== 'HOLD' && decision.confidence >= 0.75) {
         const telegramMessage = `🚨 *Qwenny Signal: ${decision.action} ${decision.symbol}*\n\n` +
           `*Größe:* ${decision.size}\n` +
