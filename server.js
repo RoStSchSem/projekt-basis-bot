@@ -1,4 +1,4 @@
-// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit Daily Cache + 15min Trends, Alpha-Arena-Prompt, Telegram, Confidence 75%
+// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit Daily Cache + 15min → 1h/4h + 1d → 1w Trends, Alpha-Arena-Prompt, Telegram, Confidence 75%
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -85,9 +85,10 @@ async function fetchDailyCandles() {
 
   for (const symbol of SYMBOLS_TO_WATCH) {
     try {
-      const candles1d = await getCandles(symbol, '1d', 200); // Letzte 200 Tage
+      // ✅ Korrektur: '1D' statt '1d'
+      const candles1d = await getCandles(symbol, '1D', 200); // Letzte 200 Tage
       if (candles1d.length < 20) {
-        log('warn', `⚠️ Zu wenige Tages-Candles für ${symbol}`);
+        log('warn', `⚠️ Zu wenige Tages-Candles für ${symbol}: ${candles1d.length}`);
         continue;
       }
 
@@ -120,9 +121,14 @@ async function fetchDailyCandles() {
         ema100,
         weeklyTrend
       };
+
+      log('info', `✅ Tages-Candles für ${symbol} gecached: ${candles1d.length} Tage`);
     } catch (e) {
       log('error', `❌ Fehler beim Laden von Tages-Candles für ${symbol}: ${e.message}`);
     }
+
+    // Kurze Pause zwischen Requests
+    await new Promise(resolve => setTimeout(resolve, 500));
   }
 
   // Speichere Cache
@@ -205,9 +211,9 @@ async function tradingCycle() {
   for (const symbol of SYMBOLS_TO_WATCH) {
     log('debug', `🔍 Analysiere ${symbol}...`);
 
-    // Hole Daten von Bitget
+    // ✅ Korrektur: '15m' statt '15min'
     const price = await getSpotPrice(symbol);
-    const candles15min = await getCandles(symbol, '15min', 96); // 96 = 24h a 15min
+    const candles15min = await getCandles(symbol, '15m', 96); // 96 = 24h a 15min
 
     if (price === null || candles15min.length === 0) {
       log('warn', `⚠️ Keine 15min-Daten für ${symbol} – überspringe`);
@@ -215,7 +221,7 @@ async function tradingCycle() {
     }
 
     // Candle-URLs und Antworten (nur im Debug-Modus)
-    log('debug', `🕯️ 15min-URL: https://api.bitget.com/api/v2/spot/market/candles?symbol=${symbol}&granularity=15min&limit=96`);
+    log('debug', `🕯️ 15min-URL: https://api.bitget.com/api/v2/spot/market/candles?symbol=${symbol}&granularity=15m&limit=96`);
 
     // Einmalige Startup-Test-Nachricht (nur beim allerersten Durchlauf)
     if (!hasSentStartupMessage) {
