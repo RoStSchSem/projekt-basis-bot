@@ -1,4 +1,4 @@
-// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit Daily Cache + 15min → 1h/4h + 1d → 1w Trends, Alpha-Arena-Prompt, Telegram, Confidence 75%
+// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit technischen Indikatoren, Daily Cache, DEBUG-Modus, Alpha-Arena-Prompt, Telegram, Confidence 75%
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -86,13 +86,21 @@ async function fetchDailyCandles() {
   for (const symbol of SYMBOLS_TO_WATCH) {
     try {
       // ✅ Korrektur: '1D' statt '1d'
-      const candles1d = await getCandles(symbol, '1D', 200); // Letzte 200 Tage
+      const candles1d = await getCandles(symbol, '1D', 100); // Reduziert auf 100 für Stabilität
+
       if (candles1d.length < 20) {
         log('warn', `⚠️ Zu wenige Tages-Candles für ${symbol}: ${candles1d.length}`);
         continue;
       }
 
       const prices = candles1d.map(c => c.close);
+
+      // ✅ Sicherstellen, dass genug Daten für EMA vorhanden
+      if (prices.length < 100) {
+        log('warn', `⚠️ Nicht genug Daten für EMA-Berechnung bei ${symbol}`);
+        continue;
+      }
+
       const ema20 = ti.ema({ values: prices, period: 20 }).slice(-1)[0];
       const ema50 = ti.ema({ values: prices, period: 50 }).slice(-1)[0];
       const ema100 = ti.ema({ values: prices, period: 100 }).slice(-1)[0];
@@ -123,6 +131,7 @@ async function fetchDailyCandles() {
       };
 
       log('info', `✅ Tages-Candles für ${symbol} gecached: ${candles1d.length} Tage`);
+
     } catch (e) {
       log('error', `❌ Fehler beim Laden von Tages-Candles für ${symbol}: ${e.message}`);
     }
@@ -435,19 +444,21 @@ Kein Text davor oder danach.
 
       // 🔍 Nur bei Signal (nicht HOLD) UND Confidence >= 75% Nachricht senden
       if (decision.action && decision.action !== 'HOLD' && decision.confidence >= 0.75) {
-        const telegramMessage = `🚨 *Qwenny Signal: ${decision.action} ${decision.symbol}*\n\n` +
-          `*Größe:* ${decision.size}\n` +
-          `*Einstieg:* ${decision.entry_price} USDT\n` +
-          `*Stop-Loss:* ${decision.stop_loss} USDT\n` +
-          `*Take-Profit:* ${decision.take_profit} USDT\n` +
-          `*Confidence:* ${(decision.confidence * 100).toFixed(1)}%\n` +
-          `*Grund:* ${decision.reason || '—'}\n\n` +
-          `Datenquelle: Bitget Spot API\n` +
-          `Zeit: ${new Date().toISOString()}`;
+        const subject = `🚨 Qwenny Signal: ${decision.action} ${symbol}`;
+        const text = `
+Einstieg: ${decision.entry_price} USDT
+Stop-Loss: ${decision.stop_loss} USDT
+Take-Profit: ${decision.take_profit} USDT
+Confidence: ${(decision.confidence * 100).toFixed(1)}%
+Grund: ${decision.reason || '—'}
 
-        await sendTelegram(telegramMessage); // ✅ Kein E-Mail-Backup mehr
+Datenquelle: Bitget Spot API
+Zeit: ${new Date().toISOString()}
+        `.trim();
 
-        log('info', `✅ Qwenny: Signal gesendet: ${decision.action} ${decision.symbol}`);
+        await sendEmail(subject, text);
+
+        log('info', `✅ Qwenny: Signal gesendet: ${decision.action} ${symbol}`);
       } else {
         log('debug', `➡️ Qwenny: Kein Signal für ${symbol} – HOLD oder Confidence < 75%`);
       }
