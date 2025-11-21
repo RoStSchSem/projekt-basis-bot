@@ -76,7 +76,7 @@ const SYMBOLS_TO_WATCH = [
   'XRPUSDT'
 ];
 
-// 🔍 Neue Funktion: Trend aus mehreren Zeitskalen (mit korrekten Granularitäten)
+// 🔍 Neue Funktion: Trend aus mehreren Zeitskalen (mit korrekten Granularitäten und Fehlerbehandlung)
 async function getTrendFromMultipleTimeframes(symbol) {
   const timeframes = [
     { name: '15min', granularity: '15min' },
@@ -90,19 +90,16 @@ async function getTrendFromMultipleTimeframes(symbol) {
     try {
       // Hole Candles für diese Granularität
       const candles = await getCandles(symbol, tf.granularity, 50);
-
       if (candles.length < 20) {
         log('debug', ` candle-${tf.name} für ${symbol} hat zu wenige Daten (<20)`);
         trendData[tf.name] = 'n/a';
         continue;
       }
 
-      // Berechne 20-EMA
       const prices = candles.map(c => c.close);
       const ema20 = ti.ema({ values: prices, period: 20 }).slice(-1)[0];
       const currentPrice = prices[prices.length - 1];
 
-      // Bestimme Trend
       if (currentPrice > ema20) {
         trendData[tf.name] = 'up';
       } else if (currentPrice < ema20) {
@@ -132,6 +129,12 @@ async function tradingCycle() {
 
     if (price === null || candles.length === 0) {
       log('warn', `⚠️ Keine Daten für ${symbol} – überspringe`);
+      continue;
+    }
+
+    // 🔍 Prüfe, ob das Symbol Candles für 15min liefert
+    if (candles.length < 5) {
+      log('warn', `⚠️ Zu wenige Candles für ${symbol} – überspringe`);
       continue;
     }
 
