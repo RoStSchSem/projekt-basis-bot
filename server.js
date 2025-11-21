@@ -1,4 +1,4 @@
-// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit technischen Indikatoren, Daily Cache, DEBUG-Modus, Alpha-Arena-Prompt, Telegram, Confidence 75%
+// server.js – Qwenny – Stabiler Multi-Symbol KI-Handelsbot mit technischen Indikatoren, Daily Cache, DEBUG-Modus, Alpha-Arena-Prompt, Telegram
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -86,7 +86,7 @@ async function fetchDailyCandles() {
   for (const symbol of SYMBOLS_TO_WATCH) {
     try {
       // ✅ Korrektur: '1D' statt '1d'
-      const candles1d = await getCandles(symbol, '1D', 100); // Reduziert auf 100 für Stabilität
+      const candles1d = await getCandles(symbol, '1D', 200); // Letzte 200 Tage
 
       if (candles1d.length < 20) {
         log('warn', `⚠️ Zu wenige Tages-Candles für ${symbol}: ${candles1d.length}`);
@@ -444,21 +444,19 @@ Kein Text davor oder danach.
 
       // 🔍 Nur bei Signal (nicht HOLD) UND Confidence >= 75% Nachricht senden
       if (decision.action && decision.action !== 'HOLD' && decision.confidence >= 0.75) {
-        const subject = `🚨 Qwenny Signal: ${decision.action} ${symbol}`;
-        const text = `
-Einstieg: ${decision.entry_price} USDT
-Stop-Loss: ${decision.stop_loss} USDT
-Take-Profit: ${decision.take_profit} USDT
-Confidence: ${(decision.confidence * 100).toFixed(1)}%
-Grund: ${decision.reason || '—'}
+        const telegramMessage = `🚨 *Qwenny Signal: ${decision.action} ${decision.symbol}*\n\n` +
+          `*Größe:* ${decision.size}\n` +
+          `*Einstieg:* ${decision.entry_price} USDT\n` +
+          `*Stop-Loss:* ${decision.stop_loss} USDT\n` +
+          `*Take-Profit:* ${decision.take_profit} USDT\n` +
+          `*Confidence:* ${(decision.confidence * 100).toFixed(1)}%\n` +
+          `*Grund:* ${decision.reason || '—'}\n\n` +
+          `Datenquelle: Bitget Spot API\n` +
+          `Zeit: ${new Date().toISOString()}`;
 
-Datenquelle: Bitget Spot API
-Zeit: ${new Date().toISOString()}
-        `.trim();
+        await sendTelegram(telegramMessage); // ✅ Kein E-Mail-Backup mehr
 
-        await sendEmail(subject, text);
-
-        log('info', `✅ Qwenny: Signal gesendet: ${decision.action} ${symbol}`);
+        log('info', `✅ Qwenny: Signal gesendet: ${decision.action} ${decision.symbol}`);
       } else {
         log('debug', `➡️ Qwenny: Kein Signal für ${symbol} – HOLD oder Confidence < 75%`);
       }
