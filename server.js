@@ -1,4 +1,4 @@
-// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit technischen Indikatoren, Telegram, DEBUG-Modus, Speicherüberwachung
+// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit Alpha-Arena-Prompt, Telegram, DEBUG-Modus, Speicherüberwachung
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -159,34 +159,87 @@ async function tradingCycle() {
     // Volumen (letztes Intervall)
     const volume = volumes[volumes.length - 1];
 
-    // DEBUG: Zeige Indikatoren in Logs
-    log('debug', `📊 Indikatoren für ${symbol}: RSI=${typeof rsi === 'number' ? rsi.toFixed(2) : rsi}, MACD=${typeof macd === 'number' ? macd.toFixed(2) : macd}, StochK=${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, Volume=${volume}`);
+    // Bestimme den Trend aus den letzten 3 Candles
+    const last3Candles = candles.slice(-3);
+    const trend = last3Candles.every((c, i, arr) => i === 0 || c.close < arr[i - 1].close) ? 'down' :
+                  last3Candles.every((c, i, arr) => i === 0 || c.close > arr[i - 1].close) ? 'up' : 'sideways';
 
-    // Deepseek befragen (neuer geänderter Prompt mit Indikatoren)
+    // DEBUG: Zeige Indikatoren in Logs
+    log('debug', `📊 Indikatoren für ${symbol}: RSI=${typeof rsi === 'number' ? rsi.toFixed(2) : rsi}, MACD=${typeof macd === 'number' ? macd.toFixed(2) : macd}, StochK=${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, Volume=${volume}, Trend=${trend}`);
+
+    // 🔍 Hole zusätzliche Daten von Bitget (z. B. Orderbuch, Funding Rate, Open Interest)
+    // Beispiel-Endpunkte (müssen ggf. angepasst werden je nach Bitget API)
+    let orderbook = null;
+    let fundingRate = 'n/a';
+    let openInterest = 'n/a';
+
+    try {
+      // Orderbuch abrufen (falls verfügbar)
+      const orderbookRes = await axios.get(`https://api.bitget.com/api/v2/spot/market/orderbook`, {
+        params: { symbol, limit: 5 }
+      });
+      if (orderbookRes.data.code === '00000') {
+        orderbook = orderbookRes.data.data;
+      }
+    } catch (e) {
+      log('debug', ` candle-Book für ${symbol} nicht verfügbar: ${e.message}`);
+    }
+
+    // Deepseek befragen (Alpha-Arena-Prompt für Spot + Bitget)
     const candleSummary = candles.slice(-3).map(c => `C:${c.close.toFixed(2)}`).join(', ');
 
     const prompt = `
 Du bist ein professioneller Krypto-Trader in der Alpha Arena.
-Symbol: ${symbol}
-Aktueller Preis: ${price.toFixed(2)} USDT
-Letzte Candles (15min): ${candleSummary}
+Dein Ziel ist es, risikoangepasste Rendite zu maximieren und Drawdowns zu minimieren.
+Du handelst Spot-Paare auf Bitget.
+Du musst deine Antwort im unten definierten JSON-Format geben.
 
-Technische Indikatoren (berechnet aus letzten 15min-Daten):
+MARKTDATEN:
+- Symbol: ${symbol}
+- Aktueller Preis: ${price.toFixed(2)} USDT
+- Letzte Candles (15min): ${candleSummary}
+- Orderbuch: ${orderbook ? JSON.stringify(orderbook) : 'n/a'}
+- Funding Rate: ${fundingRate}
+- Open Interest: ${openInterest}
+
+TECHNISCHE INDIKATOREN (berechnet aus letzten 15min-Daten):
 - RSI (14): ${typeof rsi === 'number' ? rsi.toFixed(2) : rsi}
 - MACD (12,26,9): ${typeof macd === 'number' ? macd.toFixed(2) : macd} (Signal: ${typeof macdSignal === 'number' ? macdSignal.toFixed(2) : macdSignal})
 - Stochastik (14,3,3): %K: ${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, %D: ${typeof stochD === 'number' ? stochD.toFixed(2) : stochD}
 - Volumen: ${volume}
 
-Analysiere:
+KONTEXT DEINES KONTOS (simuliert):
+- Kontostand: 10000 USDT
+- Verfügbares Guthaben: 9500 USDT
+- Positionsgröße (aktuell): 0
+- Max. Hebel: 1
+- Max. Position: 2000 USDT pro Trade
+- Max. Drawdown: 10%
+
+ANALYSE:
 - Ist der Markt überkauft (RSI > 70) oder überverkauft (RSI < 30)?
 - Gibt es einen Bullish/Bearish-Crossover bei MACD oder Stochastik?
 - Ist das Volumen stark genug, um den Trend zu bestätigen?
+- Ist das Orderbuch bullish (mehr Käufer) oder bearish (mehr Verkäufer)?
 - Ist der aktuelle Preis sinnvoll für LONG/SHORT/HOLD?
 
-Entscheide: LONG, SHORT oder HOLD.
+WICHTIG: Der aktuelle Trend ist: ${trend}. 
+- Wenn der Trend abwärts ist, dann ist das ein starkes Signal für SHORT, auch wenn RSI überverkauft ist.
+- Wenn der Trend aufwärts ist, dann ist das ein starkes Signal für LONG, auch wenn RSI überkauft ist.
+- Wenn der Trend seitwärts ist, dann achte auf RSI und Stochastik.
+
+ENTSCHEIDUNG:
+- Entweder: LONG, SHORT oder HOLD
+- Größe: 0.01 - 0.1 (abhängig von Risiko und Guthaben)
+- Stop-Loss: 2-5% unter Entry
+- Take-Profit: 5-10% über Entry
+- Verwende nur Spot-Handel (kein Leverage)
+
 Antworte NUR im folgenden JSON-Format:
 {
   "action": "...",
+  "symbol": "...",
+  "size": 0.0,
   "entry_price": 0.00,
   "stop_loss": 0.00,
   "take_profit": 0.00,
@@ -220,7 +273,8 @@ Kein Text davor oder danach.
 
       // Nur bei Signal (nicht HOLD) Nachricht senden
       if (decision.action && decision.action !== 'HOLD') {
-        const telegramMessage = `🚨 *Qwenny Signal: ${decision.action} ${symbol}*\n\n` +
+        const telegramMessage = `🚨 *Qwenny Signal: ${decision.action} ${decision.symbol}*\n\n` +
+          `*Größe:* ${decision.size}\n` +
           `*Einstieg:* ${decision.entry_price} USDT\n` +
           `*Stop-Loss:* ${decision.stop_loss} USDT\n` +
           `*Take-Profit:* ${decision.take_profit} USDT\n` +
@@ -231,7 +285,7 @@ Kein Text davor oder danach.
 
         await sendTelegram(telegramMessage); // ✅ Kein E-Mail-Backup mehr
 
-        log('info', `✅ Qwenny: Signal gesendet: ${decision.action} ${symbol}`);
+        log('info', `✅ Qwenny: Signal gesendet: ${decision.action} ${decision.symbol}`);
       } else {
         log('debug', `➡️ Qwenny: Kein Signal für ${symbol} – HOLD`);
       }
