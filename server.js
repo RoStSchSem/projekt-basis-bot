@@ -88,17 +88,21 @@ async function getTrendFromMultipleTimeframes(symbol) {
 
   for (const tf of timeframes) {
     try {
+      // Hole Candles für diese Granularität
       const candles = await getCandles(symbol, tf.granularity, 50);
+
       if (candles.length < 20) {
         log('debug', ` candle-${tf.name} für ${symbol} hat zu wenige Daten (<20)`);
         trendData[tf.name] = 'n/a';
         continue;
       }
 
+      // Berechne 20-EMA
       const prices = candles.map(c => c.close);
       const ema20 = ti.ema({ values: prices, period: 20 }).slice(-1)[0];
       const currentPrice = prices[prices.length - 1];
 
+      // Bestimme Trend
       if (currentPrice > ema20) {
         trendData[tf.name] = 'up';
       } else if (currentPrice < ema20) {
