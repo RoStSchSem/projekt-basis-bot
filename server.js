@@ -1,4 +1,4 @@
-// server.js – Qwenny – Robuste Trendanalyse (15min, 1h, 4h, 1d) + Alpha-Arena-Prompt, Telegram, Confidence 75%
+// server.js – Qwenny – Nur 15min-Trend-Analyse + Alpha-Arena-Prompt, Telegram, Confidence 75%
 
 require('dotenv').config();
 const express = require('express');
@@ -76,46 +76,6 @@ const SYMBOLS_TO_WATCH = [
   'XRPUSDT'
 ];
 
-// 🔍 Neue Funktion: Trend aus mehreren Zeitskalen (mit korrekten Granularitäten und Fehlerbehandlung)
-async function getTrendFromMultipleTimeframes(symbol) {
-  const timeframes = [
-    { name: '15min', granularity: '15min' },
-    { name: '1h', granularity: '60min' },   // Bitget verwendet "60min" statt "1h"
-    { name: '4h', granularity: '240min' },  // 4h = 240min
-    { name: '1d', granularity: '1d' }
-  ];
-  const trendData = {};
-
-  for (const tf of timeframes) {
-    try {
-      // Hole Candles für diese Granularität
-      const candles = await getCandles(symbol, tf.granularity, 50);
-      if (candles.length < 20) {
-        log('debug', ` candle-${tf.name} für ${symbol} hat zu wenige Daten (<20)`);
-        trendData[tf.name] = 'n/a';
-        continue;
-      }
-
-      const prices = candles.map(c => c.close);
-      const ema20 = ti.ema({ values: prices, period: 20 }).slice(-1)[0];
-      const currentPrice = prices[prices.length - 1];
-
-      if (currentPrice > ema20) {
-        trendData[tf.name] = 'up';
-      } else if (currentPrice < ema20) {
-        trendData[tf.name] = 'down';
-      } else {
-        trendData[tf.name] = 'sideways';
-      }
-    } catch (e) {
-      log('error', ` candle-${tf.name} für ${symbol} fehlgeschlagen: ${e.message}`);
-      trendData[tf.name] = 'n/a';
-    }
-  }
-
-  return trendData;
-}
-
 // Autonomer Trading-Zyklus für alle Symbole
 async function tradingCycle() {
   log('info', `\n🔄 Qwenny: Starte Multi-Symbol-Zyklus – ${new Date().toISOString()}`);
@@ -133,17 +93,23 @@ async function tradingCycle() {
     }
 
     // 🔍 Prüfe, ob das Symbol Candles für 15min liefert
-    if (candles.length < 5) {
+    if (candles.length < 20) {
       log('warn', `⚠️ Zu wenige Candles für ${symbol} – überspringe`);
       continue;
     }
 
-    // 🔍 Hole Trends aus mehreren Zeitskalen
-    const multiTrend = await getTrendFromMultipleTimeframes(symbol);
-    log('debug', `📊 Multi-Trend für ${symbol}: ${JSON.stringify(multiTrend)}`);
+    // Berechne 15min-Trend (über 20-EMA)
+    const prices = candles.map(c => c.close);
+    const ema20 = ti.ema({ values: prices, period: 20 }).slice(-1)[0];
+    const currentPrice = prices[prices.length - 1];
+    let trend15min = 'sideways';
+    if (currentPrice > ema20) {
+      trend15min = 'up';
+    } else if (currentPrice < ema20) {
+      trend15min = 'down';
+    }
 
     // Technische Indikatoren (wie bisher)
-    const prices = candles.map(c => c.close);
     const volumes = candles.map(c => c.volume);
     const highs = candles.map(c => c.high);
     const lows = candles.map(c => c.low);
@@ -194,7 +160,7 @@ async function tradingCycle() {
                   last3Candles.every((c, i, arr) => i === 0 || c.close > arr[i - 1].close) ? 'up' : 'sideways';
 
     // DEBUG: Zeige Indikatoren in Logs
-    log('debug', `📊 Indikatoren für ${symbol}: RSI=${typeof rsi === 'number' ? rsi.toFixed(2) : rsi}, MACD=${typeof macd === 'number' ? macd.toFixed(2) : macd}, StochK=${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, Volume=${volume}, Trend=${shortTrend}`);
+    log('debug', `📊 Indikatoren für ${symbol}: RSI=${typeof rsi === 'number' ? rsi.toFixed(2) : rsi}, MACD=${typeof macd === 'number' ? macd.toFixed(2) : macd}, StochK=${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, Volume=${volume}, Trend=${shortTrend}, 15min-Trend=${trend15min}`);
 
     // 🔍 Hole zusätzliche Daten von Bitget
     let orderbook = null;
@@ -209,7 +175,7 @@ async function tradingCycle() {
       log('debug', ` candle-Book für ${symbol} nicht verfügbar: ${e.message}`);
     }
 
-    // Deepseek befragen (verbesserter Prompt mit Multi-Trend)
+    // Deepseek befragen (Prompt mit 15min-Trend)
     const candleSummary = candles.slice(-3).map(c => `C:${c.close.toFixed(2)}`).join(', ');
 
     const prompt = `
@@ -231,15 +197,9 @@ TECHNISCHE INDIKATOREN (berechnet aus letzten 15min-Daten):
 - Volumen: ${volume}
 
 TREND-ANALYSE (basierend auf 20-EMA):
-- 15min: ${multiTrend['15min'] || 'n/a'}
-- 1h: ${multiTrend['1h'] || 'n/a'}
-- 4h: ${multiTrend['4h'] || 'n/a'}
-- 1d: ${multiTrend['1d'] || 'n/a'}
+- 15min: ${trend15min}
 
-WICHTIG: Der 1d-Trend ist dominant, der 4h-Trend ist sekundär, der 1h-Trend ist tertiär.
-Wenn der 1d-Trend 'down' ist, ist dies ein starkes Signal für SHORT, auch wenn andere Skalen 'up' zeigen.
-Wenn der 1d-Trend 'up' ist, ist dies ein starkes Signal für LONG, auch wenn andere Skalen 'down' zeigen.
-Wenn alle Skalen 'sideways' oder 'n/a' sind, dann entscheide vorsichtig.
+WICHTIG: Der 15min-Trend ist der primäre Trend. Wenn er 'down' ist, ist dies ein starkes Signal für SHORT. Wenn er 'up' ist, ist dies ein starkes Signal für LONG.
 
 KONTEXT DEINES KONTOS (simuliert):
 - Kontostand: 10000 USDT
