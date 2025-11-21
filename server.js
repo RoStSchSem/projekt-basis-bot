@@ -1,4 +1,5 @@
-// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit Alpha-Arena-Prompt, Telegram, DEBUG-Modus, Speicherüberwachung
+// server.js – Qwenny – Robuste Trendanalyse (15min, 1h, 4h, 1d) + Alpha-Arena-Prompt, Telegram, Confidence 75%
+
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -13,15 +14,15 @@ const PORT = process.env.PORT || 10000;
 // ✅ Neue Log-Funktion mit DEBUG-Unterstützung
 function log(level, message) {
   const debugEnabled = process.env.DEBUG === 'true';
-  if (level === 'debug' && !debugEnabled) return; // Zeige Debug nur, wenn DEBUG=true
+  if (level === 'debug' && !debugEnabled) return;
   if (level === 'info' || level === 'error' || level === 'warn') {
-    console.log(message); // Info, Warn, Error immer anzeigen
+    console.log(message);
   } else if (level === 'debug') {
-    console.log(`🐛 DEBUG: ${message}`); // Debug-Logs mit Markierung
+    console.log(`🐛 DEBUG: ${message}`);
   }
 }
 
-// ✅ Speicherüberwachung (alle 30 Sekunden)
+// ✅ Speicherüberwachung
 setInterval(() => {
   const used = process.memoryUsage();
   log('debug', `📊 Speicher: RSS=${Math.round(used.rss / 1024 / 1024 * 100) / 100} MB`);
@@ -46,14 +47,14 @@ async function sendTelegram(message) {
 
   if (!botToken || !chatId) {
     log('warn', '⚠️ TELEGRAM_BOT_TOKEN oder TELEGRAM_CHAT_ID fehlt – Telegram-Nachricht nicht gesendet');
-    return false; // Gibt false zurück
+    return false;
   }
 
   try {
     await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       chat_id: chatId,
       text: message,
-      parse_mode: 'Markdown' // Optional: für fett/kursiv
+      parse_mode: 'Markdown'
     });
     log('info', '✅ Telegram-Nachricht gesendet');
     return true;
@@ -75,6 +76,50 @@ const SYMBOLS_TO_WATCH = [
   'XRPUSDT'
 ];
 
+// 🔍 Neue Funktion: Trend aus mehreren Zeitskalen
+async function getTrendFromMultipleTimeframes(symbol) {
+  const timeframes = ['15min', '1h', '4h', '1d'];
+  const trendData = {};
+
+  for (const tf of timeframes) {
+    try {
+      let granularity;
+      switch (tf) {
+        case '15min': granularity = '15min'; break;
+        case '1h': granularity = '1h'; break;
+        case '4h': granularity = '4h'; break;
+        case '1d': granularity = '1d'; break;
+        default: granularity = '15min';
+      }
+
+      const candles = await getCandles(symbol, granularity, 50);
+      if (candles.length < 20) {
+        log('debug', ` candle-${tf} für ${symbol} hat zu wenige Daten (<20)`);
+        trendData[tf] = 'n/a';
+        continue;
+      }
+
+      const prices = candles.map(c => c.close);
+      const ema20 = ti.ema({ values: prices, period: 20 }).slice(-1)[0];
+      const currentPrice = prices[prices.length - 1];
+
+      if (currentPrice > ema20) {
+        trendData[tf] = 'up';
+      } else if (currentPrice < ema20) {
+        trendData[tf] = 'down';
+      } else {
+        trendData[tf] = 'sideways';
+      }
+    } catch (e) {
+      log('error', ` candle-${tf} für ${symbol} fehlgeschlagen: ${e.message}`);
+      trendData[tf] = 'n/a';
+    }
+  }
+
+  // Beispiel-Ausgabe: { '15min': 'up', '1h': 'down', '4h': 'down', '1d': 'up' }
+  return trendData;
+}
+
 // Autonomer Trading-Zyklus für alle Symbole
 async function tradingCycle() {
   log('info', `\n🔄 Qwenny: Starte Multi-Symbol-Zyklus – ${new Date().toISOString()}`);
@@ -84,47 +129,31 @@ async function tradingCycle() {
 
     // Hole Daten von Bitget
     const price = await getSpotPrice(symbol);
-    const candles = await getCandles(symbol, '15min', 50); // Mehr Candles für Indikatoren
+    const candles = await getCandles(symbol, '15min', 50);
 
     if (price === null || candles.length === 0) {
       log('warn', `⚠️ Keine Daten für ${symbol} – überspringe`);
       continue;
     }
 
-    // Candle-URL und Antwort (nur im Debug-Modus)
-    log('debug', `🕯️ Candle-URL: https://api.bitget.com/api/v2/spot/market/candles?symbol=${symbol}&granularity=15min&limit=50`);
-    log('debug', `📄 Candle-Antwort: ${JSON.stringify(candles.slice(-2))}`); // Nur letzte 2 Candles anzeigen, wenn Debug
+    // 🔍 Hole Trends aus mehreren Zeitskalen
+    const multiTrend = await getTrendFromMultipleTimeframes(symbol);
+    log('debug', `📊 Multi-Trend für ${symbol}: ${JSON.stringify(multiTrend)}`);
 
-    // Einmalige Startup-Test-Nachricht (nur beim allerersten Durchlauf)
-    if (!hasSentStartupMessage) {
-      const startupMessage = `✅ *Qwenny: Startup bestätigt – läuft für alle Symbole*\n\n` +
-        `Erstes Symbol: ${symbol}\nPreis: ${price}\nZeit: ${new Date().toISOString()}\nStatus: OK – Benachrichtigungssystem funktioniert!`;
-
-      const telegramSuccess = await sendTelegram(startupMessage);
-      if (telegramSuccess) {
-        hasSentStartupMessage = true;
-        log('info', '💬 Qwenny: Startup-Nachricht gesendet');
-      } else {
-        log('error', '❌ Qwenny: Startup-Nachricht fehlgeschlagen');
-      }
-    }
-
-    // Technische Indikatoren berechnen
+    // Technische Indikatoren (wie bisher)
     const prices = candles.map(c => c.close);
     const volumes = candles.map(c => c.volume);
     const highs = candles.map(c => c.high);
     const lows = candles.map(c => c.low);
 
-    // RSI (14)
     let rsi = 'n/a';
     if (prices.length >= 14) {
       const rsiValues = ti.rsi({ values: prices, period: 14 });
       rsi = rsiValues[rsiValues.length - 1];
     }
 
-    // MACD (12,26,9)
     let macd = 'n/a', macdSignal = 'n/a', macdHistogram = 'n/a';
-    if (prices.length >= 35) { // Mindestens 26 + 9 für MACD
+    if (prices.length >= 35) {
       const macdResult = ti.macd({
         values: prices,
         fastPeriod: 12,
@@ -139,7 +168,6 @@ async function tradingCycle() {
       }
     }
 
-    // Stochastik (14,3,3)
     let stochK = 'n/a', stochD = 'n/a';
     if (prices.length >= 14) {
       const stoch = ti.stochastic({
@@ -156,25 +184,19 @@ async function tradingCycle() {
       }
     }
 
-    // Volumen (letztes Intervall)
     const volume = volumes[volumes.length - 1];
 
-    // Bestimme den Trend aus den letzten 3 Candles
+    // Bestimme den Trend aus den letzten 3 Candles (kurzfristig)
     const last3Candles = candles.slice(-3);
-    const trend = last3Candles.every((c, i, arr) => i === 0 || c.close < arr[i - 1].close) ? 'down' :
+    const shortTrend = last3Candles.every((c, i, arr) => i === 0 || c.close < arr[i - 1].close) ? 'down' :
                   last3Candles.every((c, i, arr) => i === 0 || c.close > arr[i - 1].close) ? 'up' : 'sideways';
 
     // DEBUG: Zeige Indikatoren in Logs
-    log('debug', `📊 Indikatoren für ${symbol}: RSI=${typeof rsi === 'number' ? rsi.toFixed(2) : rsi}, MACD=${typeof macd === 'number' ? macd.toFixed(2) : macd}, StochK=${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, Volume=${volume}, Trend=${trend}`);
+    log('debug', `📊 Indikatoren für ${symbol}: RSI=${typeof rsi === 'number' ? rsi.toFixed(2) : rsi}, MACD=${typeof macd === 'number' ? macd.toFixed(2) : macd}, StochK=${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, Volume=${volume}, Trend=${shortTrend}`);
 
-    // 🔍 Hole zusätzliche Daten von Bitget (z. B. Orderbuch, Funding Rate, Open Interest)
-    // Beispiel-Endpunkte (müssen ggf. angepasst werden je nach Bitget API)
+    // 🔍 Hole zusätzliche Daten von Bitget
     let orderbook = null;
-    let fundingRate = 'n/a';
-    let openInterest = 'n/a';
-
     try {
-      // Orderbuch abrufen (falls verfügbar)
       const orderbookRes = await axios.get(`https://api.bitget.com/api/v2/spot/market/orderbook`, {
         params: { symbol, limit: 5 }
       });
@@ -185,7 +207,7 @@ async function tradingCycle() {
       log('debug', ` candle-Book für ${symbol} nicht verfügbar: ${e.message}`);
     }
 
-    // Deepseek befragen (Alpha-Arena-Prompt für Spot + Bitget)
+    // Deepseek befragen (verbesserter Prompt mit Multi-Trend)
     const candleSummary = candles.slice(-3).map(c => `C:${c.close.toFixed(2)}`).join(', ');
 
     const prompt = `
@@ -199,14 +221,23 @@ MARKTDATEN:
 - Aktueller Preis: ${price.toFixed(2)} USDT
 - Letzte Candles (15min): ${candleSummary}
 - Orderbuch: ${orderbook ? JSON.stringify(orderbook) : 'n/a'}
-- Funding Rate: ${fundingRate}
-- Open Interest: ${openInterest}
 
 TECHNISCHE INDIKATOREN (berechnet aus letzten 15min-Daten):
 - RSI (14): ${typeof rsi === 'number' ? rsi.toFixed(2) : rsi}
 - MACD (12,26,9): ${typeof macd === 'number' ? macd.toFixed(2) : macd} (Signal: ${typeof macdSignal === 'number' ? macdSignal.toFixed(2) : macdSignal})
 - Stochastik (14,3,3): %K: ${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, %D: ${typeof stochD === 'number' ? stochD.toFixed(2) : stochD}
 - Volumen: ${volume}
+
+TREND-ANALYSE (basierend auf 20-EMA):
+- 15min: ${multiTrend['15min'] || 'n/a'}
+- 1h: ${multiTrend['1h'] || 'n/a'}
+- 4h: ${multiTrend['4h'] || 'n/a'}
+- 1d: ${multiTrend['1d'] || 'n/a'}
+
+WICHTIG: Der 1d-Trend ist dominant, der 4h-Trend ist sekundär, der 1h-Trend ist tertiär.
+Wenn der 1d-Trend 'down' ist, ist dies ein starkes Signal für SHORT, auch wenn andere Skalen 'up' zeigen.
+Wenn der 1d-Trend 'up' ist, ist dies ein starkes Signal für LONG, auch wenn andere Skalen 'down' zeigen.
+Wenn alle Skalen 'sideways' oder 'n/a' sind, dann entscheide vorsichtig.
 
 KONTEXT DEINES KONTOS (simuliert):
 - Kontostand: 10000 USDT
@@ -222,11 +253,6 @@ ANALYSE:
 - Ist das Volumen stark genug, um den Trend zu bestätigen?
 - Ist das Orderbuch bullish (mehr Käufer) oder bearish (mehr Verkäufer)?
 - Ist der aktuelle Preis sinnvoll für LONG/SHORT/HOLD?
-
-WICHTIG: Der aktuelle Trend ist: ${trend}. 
-- Wenn der Trend abwärts ist, dann ist das ein starkes Signal für SHORT, auch wenn RSI überverkauft ist.
-- Wenn der Trend aufwärts ist, dann ist das ein starkes Signal für LONG, auch wenn RSI überkauft ist.
-- Wenn der Trend seitwärts ist, dann achte auf RSI und Stochastik.
 
 ENTSCHEIDUNG:
 - Entweder: LONG, SHORT oder HOLD
@@ -271,8 +297,8 @@ Kein Text davor oder danach.
 
       const decision = JSON.parse(jsonMatch[0]);
 
-      // Nur bei Signal (nicht HOLD) Nachricht senden
-      if (decision.action && decision.action !== 'HOLD') {
+      // 🔍 Nur bei Signal (nicht HOLD) UND Confidence >= 75% Nachricht senden
+      if (decision.action && decision.action !== 'HOLD' && decision.confidence >= 0.75) {
         const telegramMessage = `🚨 *Qwenny Signal: ${decision.action} ${decision.symbol}*\n\n` +
           `*Größe:* ${decision.size}\n` +
           `*Einstieg:* ${decision.entry_price} USDT\n` +
@@ -283,11 +309,11 @@ Kein Text davor oder danach.
           `Datenquelle: Bitget Spot API\n` +
           `Zeit: ${new Date().toISOString()}`;
 
-        await sendTelegram(telegramMessage); // ✅ Kein E-Mail-Backup mehr
+        await sendTelegram(telegramMessage);
 
         log('info', `✅ Qwenny: Signal gesendet: ${decision.action} ${decision.symbol}`);
       } else {
-        log('debug', `➡️ Qwenny: Kein Signal für ${symbol} – HOLD`);
+        log('debug', `➡️ Qwenny: Kein Signal für ${symbol} – HOLD oder Confidence < 75%`);
       }
     } catch (error) {
       log('error', `💥 Qwenny: Fehler bei ${symbol}: ${error.message}`);
