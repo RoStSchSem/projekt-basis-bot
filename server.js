@@ -1,4 +1,4 @@
-// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit technischen Indikatoren, Telegram & E-Mail-Backup, DEBUG-Modus, Speicherüberwachung
+// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit technischen Indikatoren, Telegram, DEBUG-Modus, Speicherüberwachung
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -46,7 +46,7 @@ async function sendTelegram(message) {
 
   if (!botToken || !chatId) {
     log('warn', '⚠️ TELEGRAM_BOT_TOKEN oder TELEGRAM_CHAT_ID fehlt – Telegram-Nachricht nicht gesendet');
-    return false; // Gibt false zurück, damit wir E-Mail als Backup nutzen können
+    return false; // Gibt false zurück
   }
 
   try {
@@ -59,25 +59,6 @@ async function sendTelegram(message) {
     return true;
   } catch (error) {
     log('error', `🚨 Telegram-Fehler: ${error.message}`);
-    return false; // Fehler – E-Mail-Backup aktivieren
-  }
-}
-
-// ✅ Resend-E-Mail senden (als Backup)
-async function sendEmail(subject, text) {
-  try {
-    await axios.post('https://api.resend.com/emails', {
-      from: 'Qwenny <onboarding@resend.dev>', // ✅ Verifizierte Domain
-      to: ['ros72.rs@gmail.com'],             // ✅ Deine E-Mail
-      subject: subject,
-      text: text
-    }, {
-      headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}` }
-    });
-    log('info', '📧 E-Mail gesendet als Backup');
-    return true;
-  } catch (error) {
-    log('error', `📧 Resend-Fehler: ${error.message}`);
     return false;
   }
 }
@@ -120,15 +101,12 @@ async function tradingCycle() {
         `Erstes Symbol: ${symbol}\nPreis: ${price}\nZeit: ${new Date().toISOString()}\nStatus: OK – Benachrichtigungssystem funktioniert!`;
 
       const telegramSuccess = await sendTelegram(startupMessage);
-      if (!telegramSuccess) {
-        await sendEmail(
-          `✅ Qwenny: Startup bestätigt`,
-          `Erstes Symbol: ${symbol}\nPreis: ${price}\nZeit: ${new Date().toISOString()}\nStatus: OK – E-Mail-System funktioniert!`
-        );
+      if (telegramSuccess) {
+        hasSentStartupMessage = true;
+        log('info', '💬 Qwenny: Startup-Nachricht gesendet');
+      } else {
+        log('error', '❌ Qwenny: Startup-Nachricht fehlgeschlagen');
       }
-
-      hasSentStartupMessage = true;
-      log('info', '📧/💬 Qwenny: Startup-Nachricht gesendet');
     }
 
     // Technische Indikatoren berechnen
@@ -251,24 +229,7 @@ Kein Text davor oder danach.
           `Datenquelle: Bitget Spot API\n` +
           `Zeit: ${new Date().toISOString()}`;
 
-        const telegramSuccess = await sendTelegram(telegramMessage);
-
-        // Falls Telegram fehlschlägt, Backup-E-Mail senden
-        if (!telegramSuccess) {
-          const subject = `🚨 Qwenny Signal: ${decision.action} ${symbol}`;
-          const text = `
-Einstieg: ${decision.entry_price} USDT
-Stop-Loss: ${decision.stop_loss} USDT
-Take-Profit: ${decision.take_profit} USDT
-Confidence: ${(decision.confidence * 100).toFixed(1)}%
-Grund: ${decision.reason || '—'}
-
-Datenquelle: Bitget Spot API
-Zeit: ${new Date().toISOString()}
-          `.trim();
-
-          await sendEmail(subject, text);
-        }
+        await sendTelegram(telegramMessage); // ✅ Kein E-Mail-Backup mehr
 
         log('info', `✅ Qwenny: Signal gesendet: ${decision.action} ${symbol}`);
       } else {
