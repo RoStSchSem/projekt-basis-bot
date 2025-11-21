@@ -1,4 +1,6 @@
-// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit 15min → 1h/4h + 1d → 1w Trends, Alpha-Arena-Prompt, Telegram, Confidence 75%
+stabiler Server.js
+
+// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit Alpha-Arena-Prompt, Telegram, DEBUG-Modus, Speicherüberwachung
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -75,72 +77,6 @@ const SYMBOLS_TO_WATCH = [
   'XRPUSDT'
 ];
 
-// Funktion: Aggregiere 15min-Candles zu 1h-Candles
-function aggregateToHourly(candles15min) {
-  const hourlyCandles = [];
-  for (let i = 0; i < candles15min.length; i += 4) {
-    const slice = candles15min.slice(i, i + 4);
-    if (slice.length < 4) continue; // Nicht genug Daten für eine volle Stunde
-
-    const open = slice[0].open;
-    const high = Math.max(...slice.map(c => c.high));
-    const low = Math.min(...slice.map(c => c.low));
-    const close = slice[slice.length - 1].close;
-    const volume = slice.reduce((sum, c) => sum + c.volume, 0);
-
-    hourlyCandles.push({ open, high, low, close, volume });
-  }
-  return hourlyCandles;
-}
-
-// Funktion: Aggregiere 1h-Candles zu 4h-Candles
-function aggregateTo4Hourly(candles1h) {
-  const fourHourlyCandles = [];
-  for (let i = 0; i < candles1h.length; i += 4) {
-    const slice = candles1h.slice(i, i + 4);
-    if (slice.length < 4) continue;
-
-    const open = slice[0].open;
-    const high = Math.max(...slice.map(c => c.high));
-    const low = Math.min(...slice.map(c => c.low));
-    const close = slice[slice.length - 1].close;
-    const volume = slice.reduce((sum, c) => sum + c.volume, 0);
-
-    fourHourlyCandles.push({ open, high, low, close, volume });
-  }
-  return fourHourlyCandles;
-}
-
-// Funktion: Aggregiere 1d-Candles zu 1w (Woche)
-function aggregateToWeekly(candles1d) {
-  const weeklyCandles = [];
-  for (let i = 0; i < candles1d.length; i += 7) {
-    const slice = candles1d.slice(i, i + 7);
-    if (slice.length < 7) continue;
-
-    const open = slice[0].open;
-    const high = Math.max(...slice.map(c => c.high));
-    const low = Math.min(...slice.map(c => c.low));
-    const close = slice[slice.length - 1].close;
-    const volume = slice.reduce((sum, c) => sum + c.volume, 0);
-
-    weeklyCandles.push({ open, high, low, close, volume });
-  }
-  return weeklyCandles;
-}
-
-// Funktion: Trend aus Candles berechnen (20-EMA)
-function calculateTrend(prices) {
-  if (prices.length < 20) return 'n/a';
-
-  const ema20 = ti.ema({ values: prices, period: 20 }).slice(-1)[0];
-  const currentPrice = prices[prices.length - 1];
-
-  if (currentPrice > ema20) return 'up';
-  else if (currentPrice < ema20) return 'down';
-  else return 'sideways';
-}
-
 // Autonomer Trading-Zyklus für alle Symbole
 async function tradingCycle() {
   log('info', `\n🔄 Qwenny: Starte Multi-Symbol-Zyklus – ${new Date().toISOString()}`);
@@ -150,17 +86,16 @@ async function tradingCycle() {
 
     // Hole Daten von Bitget
     const price = await getSpotPrice(symbol);
-    const candles15min = await getCandles(symbol, '15min', 96); // 96 = 24h a 15min
-    const candles1d = await getCandles(symbol, '1d', 14); // 14 = 2 Wochen
+    const candles = await getCandles(symbol, '15min', 50); // Mehr Candles für Indikatoren
 
-    if (price === null || candles15min.length === 0 || candles1d.length === 0) {
+    if (price === null || candles.length === 0) {
       log('warn', `⚠️ Keine Daten für ${symbol} – überspringe`);
       continue;
     }
 
-    // Candle-URLs und Antworten (nur im Debug-Modus)
-    log('debug', `🕯️ 15min-URL: https://api.bitget.com/api/v2/spot/market/candles?symbol=${symbol}&granularity=15min&limit=96`);
-    log('debug', `🕯️ 1d-URL: https://api.bitget.com/api/v2/spot/market/candles?symbol=${symbol}&granularity=1d&limit=14`);
+    // Candle-URL und Antwort (nur im Debug-Modus)
+    log('debug', `🕯️ Candle-URL: https://api.bitget.com/api/v2/spot/market/candles?symbol=${symbol}&granularity=15min&limit=50`);
+    log('debug', `📄 Candle-Antwort: ${JSON.stringify(candles.slice(-2))}`); // Nur letzte 2 Candles anzeigen, wenn Debug
 
     // Einmalige Startup-Test-Nachricht (nur beim allerersten Durchlauf)
     if (!hasSentStartupMessage) {
@@ -176,24 +111,24 @@ async function tradingCycle() {
       }
     }
 
-    // Technische Indikatoren aus 15min-Candles
-    const prices15min = candles15min.map(c => c.close);
-    const volumes15min = candles15min.map(c => c.volume);
-    const highs15min = candles15min.map(c => c.high);
-    const lows15min = candles15min.map(c => c.low);
+    // Technische Indikatoren berechnen
+    const prices = candles.map(c => c.close);
+    const volumes = candles.map(c => c.volume);
+    const highs = candles.map(c => c.high);
+    const lows = candles.map(c => c.low);
 
     // RSI (14)
     let rsi = 'n/a';
-    if (prices15min.length >= 14) {
-      const rsiValues = ti.rsi({ values: prices15min, period: 14 });
+    if (prices.length >= 14) {
+      const rsiValues = ti.rsi({ values: prices, period: 14 });
       rsi = rsiValues[rsiValues.length - 1];
     }
 
     // MACD (12,26,9)
     let macd = 'n/a', macdSignal = 'n/a', macdHistogram = 'n/a';
-    if (prices15min.length >= 35) { // Mindestens 26 + 9 für MACD
+    if (prices.length >= 35) { // Mindestens 26 + 9 für MACD
       const macdResult = ti.macd({
-        values: prices15min,
+        values: prices,
         fastPeriod: 12,
         slowPeriod: 26,
         signalPeriod: 9
@@ -208,11 +143,11 @@ async function tradingCycle() {
 
     // Stochastik (14,3,3)
     let stochK = 'n/a', stochD = 'n/a';
-    if (prices15min.length >= 14) {
+    if (prices.length >= 14) {
       const stoch = ti.stochastic({
-        high: highs15min,
-        low: lows15min,
-        close: prices15min,
+        high: highs,
+        low: lows,
+        close: prices,
         period: 14,
         signalPeriod: 3
       });
@@ -224,38 +159,24 @@ async function tradingCycle() {
     }
 
     // Volumen (letztes Intervall)
-    const volume = volumes15min[volumes15min.length - 1];
+    const volume = volumes[volumes.length - 1];
 
-    // Bestimme den Trend aus den letzten 3 Candles (kurzfristig)
-    const last3Candles = candles15min.slice(-3);
-    const trend15min = last3Candles.every((c, i, arr) => i === 0 || c.close < arr[i - 1].close) ? 'down' :
+    // Bestimme den Trend aus den letzten 3 Candles
+    const last3Candles = candles.slice(-3);
+    const trend = last3Candles.every((c, i, arr) => i === 0 || c.close < arr[i - 1].close) ? 'down' :
                   last3Candles.every((c, i, arr) => i === 0 || c.close > arr[i - 1].close) ? 'up' : 'sideways';
 
-    // 🔍 Trend aus aggregierten 1h-Candles
-    const candles1h = aggregateToHourly(candles15min);
-    const prices1h = candles1h.map(c => c.close);
-    const trend1h = calculateTrend(prices1h);
+    // DEBUG: Zeige Indikatoren in Logs
+    log('debug', `📊 Indikatoren für ${symbol}: RSI=${typeof rsi === 'number' ? rsi.toFixed(2) : rsi}, MACD=${typeof macd === 'number' ? macd.toFixed(2) : macd}, StochK=${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, Volume=${volume}, Trend=${trend}`);
 
-    // 🔍 Trend aus aggregierten 4h-Candles
-    const candles4h = aggregateTo4Hourly(candles1h);
-    const prices4h = candles4h.map(c => c.close);
-    const trend4h = calculateTrend(prices4h);
-
-    // 🔍 Trend aus 1d-Candles
-    const prices1d = candles1d.map(c => c.close);
-    const trend1d = calculateTrend(prices1d);
-
-    // 🔍 Trend aus aggregierten 1w-Candles
-    const candles1w = aggregateToWeekly(candles1d);
-    const prices1w = candles1w.map(c => c.close);
-    const trend1w = calculateTrend(prices1w);
-
-    // DEBUG: Zeige Trends in Logs
-    log('debug', `📊 Trends für ${symbol}: 15min=${trend15min}, 1h=${trend1h}, 4h=${trend4h}, 1d=${trend1d}, 1w=${trend1w}`);
-
-    // 🔍 Hole zusätzliche Daten von Bitget (z. B. Orderbuch)
+    // 🔍 Hole zusätzliche Daten von Bitget (z. B. Orderbuch, Funding Rate, Open Interest)
+    // Beispiel-Endpunkte (müssen ggf. angepasst werden je nach Bitget API)
     let orderbook = null;
+    let fundingRate = 'n/a';
+    let openInterest = 'n/a';
+
     try {
+      // Orderbuch abrufen (falls verfügbar)
       const orderbookRes = await axios.get(`https://api.bitget.com/api/v2/spot/market/orderbook`, {
         params: { symbol, limit: 5 }
       });
@@ -266,8 +187,8 @@ async function tradingCycle() {
       log('debug', ` candle-Book für ${symbol} nicht verfügbar: ${e.message}`);
     }
 
-    // Deepseek befragen (Alpha-Arena-Prompt mit allen Trends)
-    const candleSummary = candles15min.slice(-3).map(c => `C:${c.close.toFixed(2)}`).join(', ');
+    // Deepseek befragen (Alpha-Arena-Prompt für Spot + Bitget)
+    const candleSummary = candles.slice(-3).map(c => `C:${c.close.toFixed(2)}`).join(', ');
 
     const prompt = `
 Du bist ein professioneller Krypto-Trader in der Alpha Arena.
@@ -280,29 +201,14 @@ MARKTDATEN:
 - Aktueller Preis: ${price.toFixed(2)} USDT
 - Letzte Candles (15min): ${candleSummary}
 - Orderbuch: ${orderbook ? JSON.stringify(orderbook) : 'n/a'}
+- Funding Rate: ${fundingRate}
+- Open Interest: ${openInterest}
 
 TECHNISCHE INDIKATOREN (berechnet aus letzten 15min-Daten):
 - RSI (14): ${typeof rsi === 'number' ? rsi.toFixed(2) : rsi}
 - MACD (12,26,9): ${typeof macd === 'number' ? macd.toFixed(2) : macd} (Signal: ${typeof macdSignal === 'number' ? macdSignal.toFixed(2) : macdSignal})
 - Stochastik (14,3,3): %K: ${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, %D: ${typeof stochD === 'number' ? stochD.toFixed(2) : stochD}
 - Volumen: ${volume}
-
-TREND-ANALYSE (basierend auf 20-EMA):
-- 15min-Trend: ${trend15min} (kurzfristig)
-- 1h-Trend: ${trend1h} (mittel: aggregiert aus 15min)
-- 4h-Trend: ${trend4h} (mittel: aggregiert aus 1h)
-- 1d-Trend: ${trend1d} (lang: aus 1d-Candles)
-- 1w-Trend: ${trend1w} (lang: aggregiert aus 1d)
-
-WICHTIG:
-- Der 1w-Trend ist dominanter als der 1d-Trend.
-- Der 1d-Trend ist dominanter als der 4h-Trend.
-- Der 4h-Trend ist dominanter als der 1h-Trend.
-- Der 1h-Trend ist dominanter als der 15min-Trend.
-
-Wenn der 1w-Trend 'down' ist, ist dies ein starkes Signal für SHORT, auch wenn andere Skalen 'up' zeigen.
-Wenn der 1d-Trend 'down' ist, ist dies ein starkes Signal für SHORT, auch wenn 15min/1h 'up' zeigen.
-Wenn alle Trends 'sideways' oder 'n/a' sind, dann entscheide vorsichtig.
 
 KONTEXT DEINES KONTOS (simuliert):
 - Kontostand: 10000 USDT
@@ -318,6 +224,11 @@ ANALYSE:
 - Ist das Volumen stark genug, um den Trend zu bestätigen?
 - Ist das Orderbuch bullish (mehr Käufer) oder bearish (mehr Verkäufer)?
 - Ist der aktuelle Preis sinnvoll für LONG/SHORT/HOLD?
+
+WICHTIG: Der aktuelle Trend ist: ${trend}. 
+- Wenn der Trend abwärts ist, dann ist das ein starkes Signal für SHORT, auch wenn RSI überverkauft ist.
+- Wenn der Trend aufwärts ist, dann ist das ein starkes Signal für LONG, auch wenn RSI überkauft ist.
+- Wenn der Trend seitwärts ist, dann achte auf RSI und Stochastik.
 
 ENTSCHEIDUNG:
 - Entweder: LONG, SHORT oder HOLD
@@ -362,7 +273,7 @@ Kein Text davor oder danach.
 
       const decision = JSON.parse(jsonMatch[0]);
 
-      // 🔍 Nur bei Signal (nicht HOLD) UND Confidence >= 75% Nachricht senden
+      // 🔍 NEU: Nur bei Signal (nicht HOLD) UND Confidence >= 75% Nachricht senden
       if (decision.action && decision.action !== 'HOLD' && decision.confidence >= 0.75) {
         const telegramMessage = `🚨 *Qwenny Signal: ${decision.action} ${decision.symbol}*\n\n` +
           `*Größe:* ${decision.size}\n` +
