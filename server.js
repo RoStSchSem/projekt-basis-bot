@@ -76,26 +76,22 @@ const SYMBOLS_TO_WATCH = [
   'XRPUSDT'
 ];
 
-// 🔍 Neue Funktion: Trend aus mehreren Zeitskalen
+// 🔍 Neue Funktion: Trend aus mehreren Zeitskalen (mit korrekten Granularitäten)
 async function getTrendFromMultipleTimeframes(symbol) {
-  const timeframes = ['15min', '1h', '4h', '1d'];
+  const timeframes = [
+    { name: '15min', granularity: '15min' },
+    { name: '1h', granularity: '60min' },   // Bitget verwendet "60min" statt "1h"
+    { name: '4h', granularity: '240min' },  // 4h = 240min
+    { name: '1d', granularity: '1d' }
+  ];
   const trendData = {};
 
   for (const tf of timeframes) {
     try {
-      let granularity;
-      switch (tf) {
-        case '15min': granularity = '15min'; break;
-        case '1h': granularity = '1h'; break;
-        case '4h': granularity = '4h'; break;
-        case '1d': granularity = '1d'; break;
-        default: granularity = '15min';
-      }
-
-      const candles = await getCandles(symbol, granularity, 50);
+      const candles = await getCandles(symbol, tf.granularity, 50);
       if (candles.length < 20) {
-        log('debug', ` candle-${tf} für ${symbol} hat zu wenige Daten (<20)`);
-        trendData[tf] = 'n/a';
+        log('debug', ` candle-${tf.name} für ${symbol} hat zu wenige Daten (<20)`);
+        trendData[tf.name] = 'n/a';
         continue;
       }
 
@@ -104,19 +100,18 @@ async function getTrendFromMultipleTimeframes(symbol) {
       const currentPrice = prices[prices.length - 1];
 
       if (currentPrice > ema20) {
-        trendData[tf] = 'up';
+        trendData[tf.name] = 'up';
       } else if (currentPrice < ema20) {
-        trendData[tf] = 'down';
+        trendData[tf.name] = 'down';
       } else {
-        trendData[tf] = 'sideways';
+        trendData[tf.name] = 'sideways';
       }
     } catch (e) {
-      log('error', ` candle-${tf} für ${symbol} fehlgeschlagen: ${e.message}`);
-      trendData[tf] = 'n/a';
+      log('error', ` candle-${tf.name} für ${symbol} fehlgeschlagen: ${e.message}`);
+      trendData[tf.name] = 'n/a';
     }
   }
 
-  // Beispiel-Ausgabe: { '15min': 'up', '1h': 'down', '4h': 'down', '1d': 'up' }
   return trendData;
 }
 
