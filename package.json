@@ -1,19 +1,19 @@
 {
   "name": "projekt-basis-bot",
   "version": "1.0.0",
+  "description": "Qwenny – Multi-Symbol KI-Handelsbot mit technischen Indikatoren, Daily Cache, Alpha-Arena-Prompt, Telegram",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
-  },
-  "engines": {
-    "node": ">=20.x <=22.x"
+    "dev": "DEBUG=true node server.js"
   },
   "dependencies": {
-    "axios": "^1.13.2",
-    "cors": "^2.8.5",
+    "axios": "^1.7.0",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
     "technicalindicators": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=18.x <=22.x"
   }
 }
