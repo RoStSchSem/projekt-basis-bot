@@ -1,4 +1,4 @@
-// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit technischen Indikatoren, Daily Cache, Alpha-Arena-Prompt, Telegram, Confidence 75%
+// server.js – Qwenny – Multi-Symbol KI-Handelsbot mit Alpha-Arena-Prompt, Telegram, DEBUG-Modus, Speicherüberwachung
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -6,10 +6,6 @@ const { getSpotPrice, getCandles } = require('./bitgetClient');
 
 // Technische Indikatoren-Bibliothek
 const ti = require('technicalindicators');
-
-// Filesystem für Cache
-const fs = require('fs');
-const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -67,131 +63,6 @@ async function sendTelegram(message) {
   }
 }
 
-// Pfad zur Cache-Datei
-const DAILY_CACHE_FILE = path.join(__dirname, 'cache', 'daily-cache.json');
-
-// Funktion: Tages-Candles einmal täglich laden
-async function fetchDailyCandles() {
-  log('info', '🔄 Lade Tages-Candles für alle Symbole...');
-
-  // Stelle sicher, dass das Verzeichnis existiert
-  const cacheDir = path.dirname(DAILY_CACHE_FILE);
-  if (!fs.existsSync(cacheDir)) {
-    fs.mkdirSync(cacheDir, { recursive: true });
-  }
-
-  const cacheExists = fs.existsSync(DAILY_CACHE_FILE);
-  let cache = cacheExists ? JSON.parse(fs.readFileSync(DAILY_CACHE_FILE, 'utf8')) : {};
-
-  for (const symbol of SYMBOLS_TO_WATCH) {
-    try {
-      // ✅ Korrektur: '1D' statt '1d'
-      const candles1d = await getCandles(symbol, '1D', 200); // Letzte 200 Tage
-      if (candles1d.length < 20) {
-        log('warn', `⚠️ Zu wenige Tages-Candles für ${symbol}: ${candles1d.length}`);
-        continue;
-      }
-
-      const prices = candles1d.map(c => c.close);
-      const ema20 = ti.ema({ values: prices, period: 20 }).slice(-1)[0];
-      const ema50 = ti.ema({ values: prices, period: 50 }).slice(-1)[0];
-      const ema100 = ti.ema({ values: prices, period: 100 }).slice(-1)[0];
-
-      // Berechne Wochen-Trend (aus 7 Tagen)
-      let weeklyTrend = 'n/a';
-      if (candles1d.length >= 7) {
-        const weeklyPrices = candles1d.slice(-7).map(c => c.close);
-        const weeklyEma = ti.ema({ values: weeklyPrices, period: 5 }).slice(-1)[0];
-        const currentWeeklyPrice = weeklyPrices[weeklyPrices.length - 1];
-
-        if (currentWeeklyPrice > weeklyEma) {
-          weeklyTrend = 'up';
-        } else if (currentWeeklyPrice < weeklyEma) {
-          weeklyTrend = 'down';
-        } else {
-          weeklyTrend = 'sideways';
-        }
-      }
-
-      cache[symbol] = {
-        lastUpdated: new Date().toISOString(),
-        dailyCandles: candles1d,
-        ema20,
-        ema50,
-        ema100,
-        weeklyTrend
-      };
-
-      log('info', `✅ Tages-Candles für ${symbol} gecached: ${candles1d.length} Tage`);
-    } catch (e) {
-      log('error', `❌ Fehler beim Laden von Tages-Candles für ${symbol}: ${e.message}`);
-    }
-
-    // Kurze Pause zwischen Requests
-    await new Promise(resolve => setTimeout(resolve, 500));
-  }
-
-  // Speichere Cache
-  fs.writeFileSync(DAILY_CACHE_FILE, JSON.stringify(cache, null, 2));
-  log('info', '💾 Tages-Candles zwischengespeichert.');
-}
-
-// Funktion: Lies den Tages-Cache
-function loadDailyCache(symbol) {
-  if (!fs.existsSync(DAILY_CACHE_FILE)) return null;
-
-  const cache = JSON.parse(fs.readFileSync(DAILY_CACHE_FILE, 'utf8'));
-  return cache[symbol] || null;
-}
-
-// Funktion: Aggregiere 15min-Candles zu 1h-Candles
-function aggregateToHourly(candles15min) {
-  const hourlyCandles = [];
-  for (let i = 0; i < candles15min.length; i += 4) {
-    const slice = candles15min.slice(i, i + 4);
-    if (slice.length < 4) continue; // Nicht genug Daten für eine volle Stunde
-
-    const open = slice[0].open;
-    const high = Math.max(...slice.map(c => c.high));
-    const low = Math.min(...slice.map(c => c.low));
-    const close = slice[slice.length - 1].close;
-    const volume = slice.reduce((sum, c) => sum + c.volume, 0);
-
-    hourlyCandles.push({ open, high, low, close, volume });
-  }
-  return hourlyCandles;
-}
-
-// Funktion: Aggregiere 1h-Candles zu 4h-Candles
-function aggregateTo4Hourly(candles1h) {
-  const fourHourlyCandles = [];
-  for (let i = 0; i < candles1h.length; i += 4) {
-    const slice = candles1h.slice(i, i + 4);
-    if (slice.length < 4) continue;
-
-    const open = slice[0].open;
-    const high = Math.max(...slice.map(c => c.high));
-    const low = Math.min(...slice.map(c => c.low));
-    const close = slice[slice.length - 1].close;
-    const volume = slice.reduce((sum, c) => sum + c.volume, 0);
-
-    fourHourlyCandles.push({ open, high, low, close, volume });
-  }
-  return fourHourlyCandles;
-}
-
-// Funktion: Trend aus Candles berechnen (20-EMA)
-function calculateTrend(prices) {
-  if (prices.length < 20) return 'n/a';
-
-  const ema20 = ti.ema({ values: prices, period: 20 }).slice(-1)[0];
-  const currentPrice = prices[prices.length - 1];
-
-  if (currentPrice > ema20) return 'up';
-  else if (currentPrice < ema20) return 'down';
-  else return 'sideways';
-}
-
 // Globale Flag für Startup-Test
 let hasSentStartupMessage = false;
 
@@ -213,15 +84,16 @@ async function tradingCycle() {
 
     // Hole Daten von Bitget
     const price = await getSpotPrice(symbol);
-    const candles15min = await getCandles(symbol, '15m', 96); // 96 = 24h a 15min
+    const candles = await getCandles(symbol, '15min', 50); // Mehr Candles für Indikatoren
 
-    if (price === null || candles15min.length === 0) {
-      log('warn', `⚠️ Keine 15min-Daten für ${symbol} – überspringe`);
+    if (price === null || candles.length === 0) {
+      log('warn', `⚠️ Keine Daten für ${symbol} – überspringe`);
       continue;
     }
 
-    // Candle-URLs und Antworten (nur im Debug-Modus)
-    log('debug', `🕯️ 15min-URL: https://api.bitget.com/api/v2/spot/market/candles?symbol=${symbol}&granularity=15m&limit=96`);
+    // Candle-URL und Antwort (nur im Debug-Modus)
+    log('debug', `🕯️ Candle-URL: https://api.bitget.com/api/v2/spot/market/candles?symbol=${symbol}&granularity=15min&limit=50`);
+    log('debug', `📄 Candle-Antwort: ${JSON.stringify(candles.slice(-2))}`); // Nur letzte 2 Candles anzeigen, wenn Debug
 
     // Einmalige Startup-Test-Nachricht (nur beim allerersten Durchlauf)
     if (!hasSentStartupMessage) {
@@ -238,23 +110,23 @@ async function tradingCycle() {
     }
 
     // Technische Indikatoren berechnen
-    const prices15min = candles15min.map(c => c.close);
-    const volumes15min = candles15min.map(c => c.volume);
-    const highs15min = candles15min.map(c => c.high);
-    const lows15min = candles15min.map(c => c.low);
+    const prices = candles.map(c => c.close);
+    const volumes = candles.map(c => c.volume);
+    const highs = candles.map(c => c.high);
+    const lows = candles.map(c => c.low);
 
     // RSI (14)
     let rsi = 'n/a';
-    if (prices15min.length >= 14) {
-      const rsiValues = ti.rsi({ values: prices15min, period: 14 });
+    if (prices.length >= 14) {
+      const rsiValues = ti.rsi({ values: prices, period: 14 });
       rsi = rsiValues[rsiValues.length - 1];
     }
 
     // MACD (12,26,9)
     let macd = 'n/a', macdSignal = 'n/a', macdHistogram = 'n/a';
-    if (prices15min.length >= 35) { // Mindestens 26 + 9 für MACD
+    if (prices.length >= 35) { // Mindestens 26 + 9 für MACD
       const macdResult = ti.macd({
-        values: prices15min,
+        values: prices,
         fastPeriod: 12,
         slowPeriod: 26,
         signalPeriod: 9
@@ -269,11 +141,11 @@ async function tradingCycle() {
 
     // Stochastik (14,3,3)
     let stochK = 'n/a', stochD = 'n/a';
-    if (prices15min.length >= 14) {
+    if (prices.length >= 14) {
       const stoch = ti.stochastic({
-        high: highs15min,
-        low: lows15min,
-        close: prices15min,
+        high: highs,
+        low: lows,
+        close: prices,
         period: 14,
         signalPeriod: 3
       });
@@ -285,37 +157,24 @@ async function tradingCycle() {
     }
 
     // Volumen (letztes Intervall)
-    const volume = volumes15min[volumes15min.length - 1];
+    const volume = volumes[volumes.length - 1];
 
     // Bestimme den Trend aus den letzten 3 Candles
-    const last3Candles = candles15min.slice(-3);
-    const trend15min = last3Candles.every((c, i, arr) => i === 0 || c.close < arr[i - 1].close) ? 'down' :
+    const last3Candles = candles.slice(-3);
+    const trend = last3Candles.every((c, i, arr) => i === 0 || c.close < arr[i - 1].close) ? 'down' :
                   last3Candles.every((c, i, arr) => i === 0 || c.close > arr[i - 1].close) ? 'up' : 'sideways';
 
-    // 🔍 Trend aus aggregierten 1h-Candles
-    const candles1h = aggregateToHourly(candles15min);
-    const prices1h = candles1h.map(c => c.close);
-    const trend1h = calculateTrend(prices1h);
+    // DEBUG: Zeige Indikatoren in Logs
+    log('debug', `📊 Indikatoren für ${symbol}: RSI=${typeof rsi === 'number' ? rsi.toFixed(2) : rsi}, MACD=${typeof macd === 'number' ? macd.toFixed(2) : macd}, StochK=${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, Volume=${volume}, Trend=${trend}`);
 
-    // 🔍 Trend aus aggregierten 4h-Candles
-    const candles4h = aggregateTo4Hourly(candles1h);
-    const prices4h = candles4h.map(c => c.close);
-    const trend4h = calculateTrend(prices4h);
-
-    // 🔍 Lade langfristige Daten aus dem Cache
-    const dailyData = loadDailyCache(symbol);
-    const trend1d = dailyData ? calculateTrend(dailyData.dailyCandles.map(c => c.close)) : 'n/a';
-    const weeklyTrend = dailyData ? dailyData.weeklyTrend : 'n/a';
-    const ema20_daily = dailyData ? dailyData.ema20 : 'n/a';
-    const ema50_daily = dailyData ? dailyData.ema50 : 'n/a';
-    const ema100_daily = dailyData ? dailyData.ema100 : 'n/a';
-
-    // DEBUG: Zeige Trends in Logs
-    log('debug', `📊 Trends für ${symbol}: 15min=${trend15min}, 1h=${trend1h}, 4h=${trend4h}, 1d=${trend1d}, 1w=${weeklyTrend}`);
-
-    // 🔍 Hole zusätzliche Daten von Bitget (z. B. Orderbuch)
+    // 🔍 Hole zusätzliche Daten von Bitget (z. B. Orderbuch, Funding Rate, Open Interest)
+    // Beispiel-Endpunkte (müssen ggf. angepasst werden je nach Bitget API)
     let orderbook = null;
+    let fundingRate = 'n/a';
+    let openInterest = 'n/a';
+
     try {
+      // Orderbuch abrufen (falls verfügbar)
       const orderbookRes = await axios.get(`https://api.bitget.com/api/v2/spot/market/orderbook`, {
         params: { symbol, limit: 5 }
       });
@@ -326,8 +185,8 @@ async function tradingCycle() {
       log('debug', ` candle-Book für ${symbol} nicht verfügbar: ${e.message}`);
     }
 
-    // Deepseek befragen (Alpha-Arena-Prompt mit allen Trends)
-    const candleSummary = candles15min.slice(-3).map(c => `C:${c.close.toFixed(2)}`).join(', ');
+    // Deepseek befragen (Alpha-Arena-Prompt für Spot + Bitget)
+    const candleSummary = candles.slice(-3).map(c => `C:${c.close.toFixed(2)}`).join(', ');
 
     const prompt = `
 Du bist ein professioneller Krypto-Trader in der Alpha Arena.
@@ -340,40 +199,14 @@ MARKTDATEN:
 - Aktueller Preis: ${price.toFixed(2)} USDT
 - Letzte Candles (15min): ${candleSummary}
 - Orderbuch: ${orderbook ? JSON.stringify(orderbook) : 'n/a'}
+- Funding Rate: ${fundingRate}
+- Open Interest: ${openInterest}
 
 TECHNISCHE INDIKATOREN (berechnet aus letzten 15min-Daten):
 - RSI (14): ${typeof rsi === 'number' ? rsi.toFixed(2) : rsi}
 - MACD (12,26,9): ${typeof macd === 'number' ? macd.toFixed(2) : macd} (Signal: ${typeof macdSignal === 'number' ? macdSignal.toFixed(2) : macdSignal})
 - Stochastik (14,3,3): %K: ${typeof stochK === 'number' ? stochK.toFixed(2) : stochK}, %D: ${typeof stochD === 'number' ? stochD.toFixed(2) : stochD}
 - Volumen: ${volume}
-
-TREND-ANALYSE (basierend auf 20-EMA):
-- 15min-Trend: ${trend15min} (kurzfristig)
-- 1h-Trend: ${trend1h} (mittel: aggregiert aus 15min)
-- 4h-Trend: ${trend4h} (mittel: aggregiert aus 1h)
-- 1d-Trend: ${trend1d} (lang: aus Tagesdaten)
-- 1w-Trend: ${weeklyTrend} (lang: aggregiert aus 1d)
-
-LANGFRISTIGE INDIKATOREN (aus Tagesdaten):
-- EMA20: ${typeof ema20_daily === 'number' ? ema20_daily.toFixed(2) : ema20_daily}
-- EMA50: ${typeof ema50_daily === 'number' ? ema50_daily.toFixed(2) : ema50_daily}
-- EMA100: ${typeof ema100_daily === 'number' ? ema100_daily.toFixed(2) : ema100_daily}
-
-WICHTIG:
-- Der 1w-Trend ist dominanter als der 1d-Trend.
-- Der 1d-Trend ist dominanter als der 4h-Trend.
-- Der 4h-Trend ist dominanter als der 1h-Trend.
-- Der 1h-Trend ist dominanter als der 15min-Trend.
-
-Wenn der 1w-Trend 'down' ist, ist dies ein starkes Signal für SHORT, auch wenn andere Skalen 'up' zeigen.
-Wenn der 1d-Trend 'down' ist, ist dies ein starkes Signal für SHORT, auch wenn 15min/1h 'up' zeigen.
-Wenn alle Trends 'sideways' oder 'n/a' sind, dann entscheide vorsichtig.
-
-BEISPIEL-FORMULIERUNG FÜR DEEPSEEK:
-- Tagestrend: bärisch, Stundentrend: bullisch → Trendbruch, Widerstand gebrochen
-- Tagestrend: bärisch, Stundentrend: bärisch → weiterhin bärisch
-- Tagestrend: bullisch, Stundentrend: bullisch → weiterhin bullisch
-- Tagestrend: bullisch, Stundentrend: bärisch → möglicher Trendwechsel
 
 KONTEXT DEINES KONTOS (simuliert):
 - Kontostand: 10000 USDT
@@ -389,6 +222,11 @@ ANALYSE:
 - Ist das Volumen stark genug, um den Trend zu bestätigen?
 - Ist das Orderbuch bullish (mehr Käufer) oder bearish (mehr Verkäufer)?
 - Ist der aktuelle Preis sinnvoll für LONG/SHORT/HOLD?
+
+WICHTIG: Der aktuelle Trend ist: ${trend}. 
+- Wenn der Trend abwärts ist, dann ist das ein starkes Signal für SHORT, auch wenn RSI überverkauft ist.
+- Wenn der Trend aufwärts ist, dann ist das ein starkes Signal für LONG, auch wenn RSI überkauft ist.
+- Wenn der Trend seitwärts ist, dann achte auf RSI und Stochastik.
 
 ENTSCHEIDUNG:
 - Entweder: LONG, SHORT oder HOLD
@@ -433,21 +271,19 @@ Kein Text davor oder danach.
 
       const decision = JSON.parse(jsonMatch[0]);
 
-      // 🔍 Nur bei Signal (nicht HOLD) UND Confidence >= 75% Nachricht senden
+      // 🔍 NEU: Nur bei Signal (nicht HOLD) UND Confidence >= 75% Nachricht senden
       if (decision.action && decision.action !== 'HOLD' && decision.confidence >= 0.75) {
-        const subject = `🚨 Qwenny Signal: ${decision.action} ${symbol}`;
-        const text = `
-Einstieg: ${decision.entry_price} USDT
-Stop-Loss: ${decision.stop_loss} USDT
-Take-Profit: ${decision.take_profit} USDT
-Confidence: ${(decision.confidence * 100).toFixed(1)}%
-Grund: ${decision.reason || '—'}
+        const telegramMessage = `🚨 *Qwenny Signal: ${decision.action} ${decision.symbol}*\n\n` +
+          `*Größe:* ${decision.size}\n` +
+          `*Einstieg:* ${decision.entry_price} USDT\n` +
+          `*Stop-Loss:* ${decision.stop_loss} USDT\n` +
+          `*Take-Profit:* ${decision.take_profit} USDT\n` +
+          `*Confidence:* ${(decision.confidence * 100).toFixed(1)}%\n` +
+          `*Grund:* ${decision.reason || '—'}\n\n` +
+          `Datenquelle: Bitget Spot API\n` +
+          `Zeit: ${new Date().toISOString()}`;
 
-Datenquelle: Bitget Spot API
-Zeit: ${new Date().toISOString()}
-        `.trim();
-
-        await sendTelegram(text); // ✅ Kein E-Mail-Backup mehr
+        await sendTelegram(telegramMessage); // ✅ Kein E-Mail-Backup mehr
 
         log('info', `✅ Qwenny: Signal gesendet: ${decision.action} ${decision.symbol}`);
       } else {
@@ -463,11 +299,6 @@ Zeit: ${new Date().toISOString()}
 
 // Startfunktion
 function startTradingBot() {
-  // Starte den täglichen Abruf einmalig (oder nach einem Zeitplan)
-  fetchDailyCandles(); // Sofort starten
-  setInterval(fetchDailyCandles, 24 * 60 * 60 * 1000); // Alle 24h
-
-  // Starte den intraday-Zyklus
   tradingCycle(); // Sofort starten
   setInterval(tradingCycle, 60_000); // Alle 60 Sekunden
 }
