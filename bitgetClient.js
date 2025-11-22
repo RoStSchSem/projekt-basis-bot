@@ -15,7 +15,7 @@ function log(level, message) {
 
 // ✅ Mapping von internen Intervallen zu Bitget-Granularitäten
 const GRANULARITY_MAP = {
-  // Spot-Granularitäten
+  // Spot-Granularitäten (korrekt für Bitget API v2)
   '1m': '1m',
   '5m': '5m',
   '15m': '15m',
@@ -29,7 +29,7 @@ const GRANULARITY_MAP = {
   '1W': '1W',
   '1M': '1M',
 
-  // ⚠️ Veraltete oder falsche Werte (nur für Abwärtskompatibilität)
+  // Veraltete oder falsche Werte (nur für Abwärtskompatibilität)
   '1min': '1m',
   '5min': '5m',
   '15min': '15m',
